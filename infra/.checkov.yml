@@ -1,0 +1,31 @@
+# Checkov configuration for the GreetEat Paperclip deployment.
+#
+# Run from the repo root as:
+#   checkov --config-file infra/.checkov.yml --directory infra/
+#
+# Or hooked into PR-time CI via .github/workflows/terraform-plan.yml (T065).
+
+framework:
+  - terraform
+  - dockerfile
+  - github_actions
+  - secrets
+
+# Fail the build on any HIGH/CRITICAL finding without an explicit suppression
+soft-fail: false
+quiet: true
+compact: true
+
+# Don't pull external Terraform modules — we only have local modules
+download-external-modules: false
+
+# Skip rules that don't apply to our shape:
+#   CKV_GCP_18 — "Ensure GKE clusters use private IPs" — N/A, we don't use GKE
+#   CKV_GCP_69 — "Ensure GKE Workload Identity is enabled" — N/A
+skip-check:
+  - CKV_GCP_18
+  - CKV_GCP_69
+
+# Add explicit baseline-suppressions here only when justified, with a comment
+# explaining WHY each suppression exists (e.g., "Cloud SQL deletion protection
+# is enabled but Checkov can't detect it through the module abstraction").
