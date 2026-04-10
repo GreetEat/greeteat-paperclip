@@ -46,13 +46,13 @@ No stub, no real key.
 | `PAPERCLIP_SECRETS_STRICT_MODE` | `true` | Forces secret-reference mandate per principle IV. |
 | `PAPERCLIP_INSTANCE_ID` | `prod` | Identifies the deployment instance in logs and metrics. Single environment for v1. |
 | `S3_ENDPOINT` | `https://storage.googleapis.com` | GCS S3 interop endpoint. |
-| `S3_BUCKET` | `greeteat-paperclip-uploads-prod` | The deployment's GCS bucket name. |
+| `S3_BUCKET` | `paperclip-492823-uploads` | The deployment's GCS bucket name. |
 | `S3_REGION` | `auto` (or the bucket's region) | Required by some S3 SDK clients; GCS interop accepts `auto`. |
 | `LOG_LEVEL` | `info` | Controls Paperclip log verbosity. |
 | `LOG_FORMAT` | `json` | Required for Cloud Logging structured-log mapping. |
 | `CLAUDE_CODE_USE_VERTEX` | `1` | Switches the Claude Code CLI (spawned by Paperclip's `claude_local` adapter) to Vertex AI instead of api.anthropic.com. |
 | `CLOUD_ML_REGION` | `global` | Vertex AI global endpoint — no pricing premium, dynamic routing across regions where Claude has capacity. |
-| `ANTHROPIC_VERTEX_PROJECT_ID` | `greeteat-staging` | GCP project ID for Vertex AI Anthropic model invocations. |
+| `ANTHROPIC_VERTEX_PROJECT_ID` | `paperclip-492823` | GCP project ID for Vertex AI Anthropic model invocations. |
 | `ANTHROPIC_DEFAULT_SONNET_MODEL` | `claude-sonnet-4-6` | Pin Claude Code's Sonnet model to the version we verified live in Model Garden. |
 
 ## Runtime outputs

@@ -46,26 +46,36 @@
   invitation flow is URL-based with no email infrastructure required,
   which removed an entire decision (and its implementation cost) from
   the plan.
-- **Current draft (post-pivot to shared project + Vertex Claude)**: a
-  dedicated `paperclip` project was created but couldn't have billing
-  attached (Victor doesn't hold `roles/billing.user` on the billing
+- **Fourth draft (brief shared-project intermezzo)**: a dedicated
+  `paperclip` project was created on 2026-04-09 but couldn't have
+  billing attached (Victor lacked `roles/billing.user` on the billing
   account). After comprehensive permission testing on the existing
-  GreetEat projects, we pivoted to host Paperclip inside the existing
-  `greeteat-staging` project — Victor is owner, billing is already
-  attached, and a clean inspection confirmed there are no naming
-  conflicts with the Firebase / App Engine workloads already there.
-  The shared-project pivot also collapses the two-environment plan
-  into a single environment (the shared project hosts the one
-  Paperclip deployment), requiring a Complexity Tracking entry in
-  `plan.md` justifying the departure from constitutional principle II.
-  Vertex AI Claude Sonnet 4.6 was confirmed live with a successful
-  predict call on 2026-04-10. Paperclip's `claude_local` adapter
-  preflight was then verified end-to-end the same day with a local
+  GreetEat projects, the plan briefly pivoted to host Paperclip inside
+  the existing `greeteat-staging` project where billing was already
+  attached. The shared-project pivot also collapsed the two-environment
+  plan into a single environment, requiring a Complexity Tracking entry
+  in `plan.md`. Phase B verification of Vertex Claude ran in this
+  shared project. Vertex AI Claude Sonnet 4.6 was confirmed live with
+  a successful predict call on 2026-04-10, and Paperclip's `claude_local`
+  adapter preflight was verified end-to-end the same day with a local
   Paperclip instance running multi-turn agent tasks against Vertex
   Claude Sonnet 4.6 — every message ID had the `msg_vrtx_*` prefix
-  and `apiKeySource: "none"`, with no `ANTHROPIC_API_KEY` set anywhere.
-  The LLM provider question is fully resolved: Vertex Claude, no
-  Anthropic API key in any form.
+  and `apiKeySource: "none"`. The LLM provider question is fully
+  resolved: Vertex Claude, no Anthropic API key in any form.
+- **Current draft (post-pivot back to dedicated project)**: on
+  2026-04-10 the operator obtained the missing billing-account grant
+  and attached billing (`01BCB7-61A725-D6A2B5`) to the dedicated
+  `paperclip-492823` project. The plan was re-targeted from the
+  shared `greeteat-staging` project back to the dedicated
+  `paperclip-492823` project, eliminating all co-tenant /
+  shared-resource concerns from the Phase A/B drafts. Single
+  environment is retained per user direction; the Complexity Tracking
+  entry was rewritten so single-env is now justified by user choice
+  + cost trade-off + small operator group, not by a billing-constraint
+  workaround. Local-dev workflow recommendations were dropped from
+  `quickstart.md` per the user's CI-only-deployment direction. Vertex
+  Claude Model Garden access on `paperclip-492823` is enabled
+  separately by the operator (per-project subscription).
 
 ### Open coverage
 

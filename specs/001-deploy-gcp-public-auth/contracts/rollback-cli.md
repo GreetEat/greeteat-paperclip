@@ -29,14 +29,14 @@ operation, not an emergency improvisation. This contract defines what
 
 | Variable | Purpose |
 |---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` or WIF | Authentication. |
+| WIF assertion from GitHub Actions | Authentication via the `paperclip-github` WIF pool. CI-only path, same as `deploy.sh`. |
 | `CLOUDSDK_CORE_PROJECT` | Target project. |
 | `GREETEAT_DEPLOY_OPERATOR` | Operator identifier; required and audited. |
 
 ## Behavior
 
 1. **Preflight** — refuse to run if:
-   - `CLOUDSDK_CORE_PROJECT` is not `greeteat-staging`
+   - `CLOUDSDK_CORE_PROJECT` is not `paperclip-492823`
    - the requested target revision does not exist in the service
    - `--to-previous` would resolve to the same revision currently
      serving 100% (nothing to roll back)

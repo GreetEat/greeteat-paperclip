@@ -5,7 +5,7 @@
 **Spec**: [spec.md](./spec.md)
 **Plan**: [plan.md](./plan.md)
 **Constraints**: GCP-native, no AWS, no Supabase, no email infrastructure,
-shared `greeteat-staging` project, single environment, Vertex Claude.
+shared `paperclip-492823` project, single environment, Vertex Claude.
 
 This document records the technology decisions that resolve the Phase 0
 unknowns and the rationale + alternatives for each. Every decision below
@@ -16,7 +16,7 @@ is binding unless explicitly amended.
 ## Decision 1 — Application host: Cloud Run
 
 **Decision**: Run the Paperclip container as a managed **Cloud Run service**
-inside the shared `greeteat-staging` project. `min-instances=2` so the
+inside the shared `paperclip-492823` project. `min-instances=2` so the
 service is always warm and rolling deploys never drain the live revision
 to zero. Container concurrency = 80 (Cloud Run default), CPU = 2 vCPU,
 memory = 2 GiB (revisited at first cost review). Egress to Cloud SQL
@@ -54,15 +54,10 @@ makes the suffix unnecessary.
   "managed everything" stance of the rest of the stack. Rejected.
 - **App Engine Flex** — older serverless container product, less
   active development than Cloud Run, similar but worse integration with
-  modern GCP services. The fact that `greeteat-staging` already has App
-  Engine enabled is *not* a reason to reuse it — App Engine and Cloud
-  Run can coexist in the same project, and Cloud Run is the right tool
-  for the workload. Rejected.
+  modern GCP services. Rejected.
 - **Cloud Functions / 2nd gen** — invocation model is per-request and
   ephemeral, incompatible with a long-lived stateful Express server, and
-  forbidden by spec FR-015. Rejected. (Note: `greeteat-staging` already
-  uses Cloud Functions for the Firebase scheduled jobs — those continue
-  to run independently.)
+  forbidden by spec FR-015. Rejected.
 
 **Followups**:
 - Revisit CPU + memory sizing at first cost review.
@@ -79,7 +74,7 @@ makes the suffix unnecessary.
 ## Decision 2 — IaC tool: Terraform
 
 **Decision**: Terraform with the `google` and `google-beta` providers,
-state in a GCS backend bucket inside `greeteat-staging` named
+state in a GCS backend bucket inside `paperclip-492823` named
 `paperclip-tf-state` (with object versioning enabled), provider versions
 pinned in `.terraform.lock.hcl`. No external lock service required —
 the GCS backend uses object-level locking via the Google provider.
@@ -157,7 +152,7 @@ instance is sized for production workload.
 - **Embedded PGlite** — explicitly forbidden by the spec (FR-016) and
   by Paperclip's own docs for production. Rejected.
 - **Supabase Postgres** — explicitly excluded by user constraint.
-- **Reuse the existing Firestore in `greeteat-staging`** — Firestore is
+- **Reuse the existing Firestore in `paperclip-492823`** — Firestore is
   document-oriented, not relational. Paperclip needs Postgres.
   Rejected.
 
@@ -175,7 +170,7 @@ instance is sized for production workload.
 ## Decision 4 — Object storage: Google Cloud Storage with S3 interop
 
 **Decision**: One private GCS bucket named
-`greeteat-paperclip-uploads-prod`, with **uniform bucket-level access**
+`paperclip-492823-uploads`, with **uniform bucket-level access**
 and **public access prevention** both enforced. SSE encryption at rest
 (default Google-managed keys; customer-managed CMEK is a follow-up).
 **Object versioning enabled**. Lifecycle rule: abort incomplete
@@ -186,10 +181,10 @@ service account with `roles/storage.objectUser` scoped to its own
 bucket only, and the access ID + secret are stored in Secret Manager.
 
 The bucket name is explicitly distinct from the existing
-`greeteat-staging.appspot.com`, `staging.greeteat-staging.appspot.com`,
-`us.artifacts.greeteat-staging.appspot.com`, and
+`paperclip-492823.appspot.com`, `staging.paperclip-492823.appspot.com`,
+`us.artifacts.paperclip-492823.appspot.com`, and
 `gcf-sources-233990667256-us-central1` buckets that already live in
-`greeteat-staging` (no collision possible).
+`paperclip-492823` (no collision possible).
 
 **Rationale**:
 - Paperclip's storage backend supports "S3-compatible" providers
@@ -211,10 +206,6 @@ The bucket name is explicitly distinct from the existing
 - **Use Cloud Run service account directly with the GCS native API** —
   not possible because Paperclip's storage backend speaks S3, not the
   native GCS API. Rejected (forced).
-- **Reuse one of the existing App Engine buckets** — they're owned by
-  App Engine for its own purposes; layering Paperclip uploads onto them
-  would create cross-application interference and violate the
-  blast-radius mitigation we're committing to. Rejected.
 - **Serve uploads through Cloud CDN** — Paperclip serves uploads
   through its own access-controlled endpoints; bypassing that with a
   CDN would defeat per-user authorization. Rejected.
@@ -229,7 +220,7 @@ The bucket name is explicitly distinct from the existing
 ## Decision 5 — Secrets: GCP Secret Manager + bootstrap scripts
 
 **Decision**: All sensitive values live in GCP Secret Manager in
-`greeteat-staging`. The Paperclip Cloud Run service mounts each secret
+`paperclip-492823`. The Paperclip Cloud Run service mounts each secret
 as an environment variable at deploy time via the service spec's
 `env.value_source.secret_key_ref` field. Secrets are:
 `paperclip-master-key`, `paperclip-database-url`,
@@ -283,7 +274,7 @@ Manager secrets (access ID + secret).
   rejected: long-lived static credentials violate principle IV.
 - **`ANTHROPIC_API_KEY` in Secret Manager (the original plan)** —
   superseded by Vertex Claude. Vertex was confirmed live on
-  `greeteat-staging` on 2026-04-10 with a successful predict call,
+  `paperclip-492823` on 2026-04-10 with a successful predict call,
   eliminating the long-lived Anthropic credential.
 
 **Followups**:
@@ -293,16 +284,6 @@ Manager secrets (access ID + secret).
   it accordingly.
 - ✅ **Paperclip preflight verification** — RESOLVED 2026-04-10. See
   the verification note above.
-- **Local-dev service account key for ADC** — `victor@greeteat.com`
-  user-credential ADC has aggressive RAPT (reauth proof token) expiry
-  (~10–15 min between forced re-auths), making sustained local testing
-  against Vertex painful. Recommended local-dev workaround: create a
-  dedicated `paperclip-local-dev` service account with
-  `roles/aiplatform.user` only, generate a JSON key kept locally (never
-  committed), and set `GOOGLE_APPLICATION_CREDENTIALS` to point at it.
-  Service account tokens auto-refresh and have no RAPT requirement.
-  **Production Cloud Run is unaffected** — it uses metadata-server
-  tokens for `paperclip-runtime-sa`, not file-based credentials.
 - Add an automated weekly check that the secret values are still
   resolvable by the Cloud Run service account.
 
@@ -392,11 +373,11 @@ builds the Paperclip image from a pinned upstream Paperclip git tag
 against it, authenticates to GCP via **project-scoped Workload Identity
 Federation** (no service account JSON keys), and pushes the image to a
 new `paperclip` repository in **Artifact Registry** inside
-`greeteat-staging` with two tags — the Paperclip release version and
+`paperclip-492823` with two tags — the Paperclip release version and
 the build's git SHA — and outputs the immutable digest. The Terraform
 service spec references the digest, never a tag.
 
-The WIF pool is project-scoped (created inside `greeteat-staging` via
+The WIF pool is project-scoped (created inside `paperclip-492823` via
 the `infra/modules/workload-identity/` module) because Victor lacks
 org-level WIF permissions. Project-scoped WIF works identically for
 the GitHub Actions → GCP path; it just lives in a project rather than
@@ -425,11 +406,6 @@ at the org root.
   Rejected (forced).
 - **Container Registry (gcr.io)** — deprecated by Google in favor of
   Artifact Registry. Rejected (deprecated).
-- **Reuse the existing `gcf-artifacts` Artifact Registry repo in
-  `greeteat-staging`** (which Cloud Functions created automatically) —
-  it's owned by Cloud Functions and writing Paperclip images into it
-  would cross a tooling boundary. Create our own `paperclip` repo
-  instead. Rejected.
 - **Service account JSON key in GitHub secret** — works but
   reintroduces the long-lived static credential WIF was created to
   eliminate. Rejected.
@@ -507,10 +483,6 @@ with upstream before first production deploy.
   requirement.
 - **Tracing**: Cloud Trace is **out of scope for v1**; revisit when
   there's a concrete debugging need that logs + metrics can't answer.
-- **Coexistence with Firebase observability**: the existing Firebase
-  / App Engine workloads in `greeteat-staging` already write to Cloud
-  Logging; the Paperclip log sink filters by `service=paperclip` so
-  the audit-log bucket only contains Paperclip-relevant entries.
 
 **Rationale**:
 - Cloud Logging + Cloud Monitoring is in-project, in-region, no extra
@@ -521,8 +493,8 @@ with upstream before first production deploy.
 - Splitting auth events into their own log bucket via the Log Router
   isolates retention and access control without forcing a third
   logging tool.
-- Filtering by `service=paperclip` gives clean isolation from the
-  co-tenant Firebase workloads.
+- Filtering by `service=paperclip` keeps reports scoped even if the
+  project ever gains additional workloads in the future.
 
 **Alternatives considered**:
 - **Datadog / Honeycomb / Grafana Cloud** — better tooling for some
@@ -537,75 +509,86 @@ Phase 2 tasks.
 
 ---
 
-## Decision 11 — Hosting: shared `greeteat-staging` project, single environment
+## Decision 11 — Hosting: dedicated `paperclip-492823` project, single environment
 
-**Decision**: Paperclip is deployed inside the existing
-`greeteat-staging` GCP project (project number `233990667256`,
-parented to `greeteat.com` org `768469506142`). It is the **only**
-environment for Paperclip — there is no separate staging instance.
-Strict resource namespacing (`paperclip-*` / `paperclipai-*`) and a
-`service=paperclip` label on every Paperclip-managed resource keep
-Paperclip resources separated from the existing Firebase / App Engine
-workloads in the same project.
+**Decision**: Paperclip is deployed inside the **dedicated**
+`paperclip-492823` GCP project (display name `paperclip`, project
+number `233990667256`, parented directly to `greeteat.com` org
+`768469506142`). It is the **only** environment for Paperclip — there
+is no separate staging instance — and it is the **only workload** in
+the project (no Firebase, App Engine, Cloud Functions, or other
+GreetEat workloads share it). Resource namespacing (`paperclip-*` /
+`paperclipai-*`) and a `service=paperclip` label remain in place as
+good practice for cost attribution and IAM hygiene, but they are no
+longer required for collision avoidance.
 
-This decision **replaces** the earlier "two separate GCP projects under
-a Folder" plan.
+**History**: The project was created manually by the operator on
+2026-04-09, originally requested as `paperclip` but auto-suffixed to
+`paperclip-492823` because GCP project IDs are globally unique and
+the friendly ID was taken. Billing was not attached at create time
+because the operator lacked `billing.resourceAssociations.create` on
+the billing account. The plan briefly pivoted to hosting Paperclip
+inside the existing `greeteat-staging` project (which already had
+billing attached) and that hosting choice was used during Phase B
+verification of Vertex Claude. On 2026-04-10 the operator obtained
+the necessary billing grant and attached `01BCB7-61A725-D6A2B5` to
+`paperclip-492823`, **eliminating the original shared-project
+constraint**. The plan was then re-targeted to the dedicated
+`paperclip-492823` project, where every constitutional principle
+holds without the shared-project mitigations the previous draft had
+to enumerate.
 
 **Rationale**:
-- **Billing access blocker**. A dedicated `paperclip` project was
-  created on 2026-04-09 (auto-suffixed to `paperclip-492823` because
-  the friendly ID was taken globally). The project is owned by Victor
-  but **billing could not be attached** because Victor lacks
-  `billing.resourceAssociations.create` on the org's billing account
-  `01BCB7-61A725-D6A2B5`. Without billing, the project is inert. The
-  only way to unblock without escalating to a billing admin is to
-  reuse a project that already has billing attached.
-- **Existing project access**. Victor holds `roles/owner` on
-  `greeteat-staging`, billing is already attached, and a comprehensive
-  read-only inspection on 2026-04-09 confirmed there are no naming
-  conflicts in any category Paperclip needs (Cloud Run, Cloud SQL,
-  Compute, Secret Manager, Cloud DNS, Vertex AI, GCS — all clear).
-- **Live LLM verification**. Vertex AI Claude Sonnet 4.6 was confirmed
-  live in this exact project on 2026-04-10 with a successful
-  `rawPredict` call returning HTTP 200. The deployment can use Vertex
-  Claude with the Cloud Run service account and no Anthropic API key.
-- **Single environment** is forced by the same billing-grant gap: a
-  second project would face the same blocker. Two environments inside
-  one project would defeat the isolation that motivates Principle II.
-  See `plan.md` Complexity Tracking for the full justification and
-  the compensating mitigations.
-- **Shared-project risk mitigation**: every Paperclip-managed resource
-  uses the `paperclip-` or `paperclipai-` prefix, carries a
-  `service=paperclip` label for cost attribution, and runs under a
-  dedicated `paperclip-runtime-sa` service account that has only the
-  narrow IAM grants Paperclip needs. The default Compute service
-  account in `greeteat-staging` (which has broad legacy privileges)
-  is **never** used by Paperclip.
+- **Hard isolation**. Dedicated GCP project = hard IAM, billing, and
+  resource isolation by GCP's primary tenancy primitive. An IAM
+  mistake in this project cannot affect any other GreetEat project.
+- **Clean slate**. No co-tenant resources, no existing service
+  accounts to avoid, no naming-collision risk, no quota sharing with
+  unrelated workloads. The default Compute service account exists in
+  every GCP project but is still excluded from Paperclip use as good
+  practice.
+- **Audit clarity**. Cost reports, audit logs, IAM bindings, and
+  resource inventories filtered to one project = one workload. No
+  filtering by label needed.
+- **Rollback / decommission**. `terraform destroy` cleans up the
+  Paperclip resources; if a full reset is ever needed, the project
+  itself can be soft-deleted (`gcloud projects delete paperclip-492823`,
+  30-day recovery window) without affecting any other GreetEat work.
+- **Single environment** is a separate decision driven by user
+  direction ("we only need prod") and operational scale, not by any
+  billing or IAM constraint. See `plan.md` Complexity Tracking for
+  the full justification and the compensating mitigations.
 
 **Alternatives considered**:
-- **Two new GCP projects under a Folder** (the original plan) —
-  blocked by billing-grant gap. Rejected.
-- **Single new GCP project** — same blocker. Rejected.
+- **Two GCP projects under a Folder** (the original v0 plan) —
+  organisational pattern that gives independent staging + production
+  with full isolation. Rejected because the user explicitly scoped
+  this feature to a single environment; revisitable per the plan's
+  Complexity Tracking re-evaluation triggers.
+- **Reuse `greeteat-staging` (the Phase B verification project)** —
+  this was the v1 plan during the brief period when billing was
+  blocked on `paperclip-492823`. Rejected once billing was attached
+  on the dedicated project on 2026-04-10. Sharing with the existing
+  Firebase / App Engine workloads in `greeteat-staging` introduced
+  unnecessary blast radius and IAM/cost-attribution overhead that
+  the dedicated project avoids.
 - **Reuse `greeteat-app`, `greeteat-cb454`, or `greeteat-web-qa`** —
-  unverified. `greeteat-staging` was the only existing project where
-  Victor's role and the billing state were both confirmed end-to-end.
-  Rejected as v1 choice; could be revisited later.
-- **Wait for a billing admin to grant `roles/billing.user`** — would
-  unblock the dedicated-project path but on an unknown timeline.
-  Rejected for v1; the shared-project path unblocks immediately and
-  the Complexity Tracking re-evaluation trigger ensures we revisit
-  once that grant lands.
+  unverified, would mix concerns. Rejected.
 
 **Followups**:
-- **Re-evaluation trigger**: revisit this decision if Victor obtains
-  `roles/billing.user`, if GreetEat operator count exceeds 50, if
-  Paperclip becomes customer-facing, or if a second tenant emerges.
-- **Verify the orphaned `paperclip-492823` project** stays empty
-  (no charges, no activity). It can be left as-is or soft-deleted
-  with `gcloud projects delete` — both are recoverable.
 - **Audit `service=paperclip` label coverage** before first deploy —
-  every Terraform resource MUST carry it, enforced by tflint or
-  checkov rule.
+  recommended for cost reports and resource queries; not strictly
+  required for collision avoidance now that the project is dedicated.
+- **Display name vs project ID** — the display name `paperclip` is
+  what shows in the GCP console; the immutable project ID
+  `paperclip-492823` is what `gcloud --project` and Terraform `project`
+  attributes reference. Documentation uses the project ID; narrative
+  prose can refer to "the `paperclip` project".
+- **Stale `greeteat-staging` Vertex Model Garden enablement** — Claude
+  Sonnet 4.6 was enabled in `greeteat-staging` during Phase B
+  verification. It is now unused for this deployment. The operator
+  may leave it enabled (no cost when unused) or disable it via the
+  Model Garden console.
 
 ---
 
@@ -645,18 +628,13 @@ no-email + shared-project + single-env + Vertex-Claude constraint set:
 | TLS / DNS edge | Decision 6: Cloud Run domain mapping + Cloud DNS |
 | Container image build pipeline | Decision 8: GitHub Actions → Artifact Registry via project-scoped WIF |
 | (added) LLM provider | Vertex AI Claude Sonnet 4.6 (verified live 2026-04-10) |
-| (added) Hosting project | Decision 11: shared `greeteat-staging` |
+| (added) Hosting project | Decision 11: dedicated `paperclip-492823` |
 | (added) Number of environments | Decision 11: single environment with Complexity Tracking entry |
 
 ## Followups (do not block Phase 1)
 
 - ✅ **Paperclip preflight verification** — RESOLVED 2026-04-10. See
   Decision 5 verification note.
-- **ADC refresh / local-dev service account key** — user-credential
-  ADC has RAPT expiry issues that bite during sustained local testing
-  (~10–15 min reauth cycle). Recommend creating a dedicated
-  `paperclip-local-dev` service account JSON key for local dev only.
-  See Decision 5 followup. Production Cloud Run unaffected.
 - **Master key rotation cadence and procedure** (Decision 5)
 - **Cloud SQL password rotation script** (Decision 3)
 - **Schema-drift CI gate** before first production migration

@@ -7,10 +7,8 @@
 
 This document models two layers:
 
-1. **Deployed-resource model** — the GCP resources Terraform manages and
-   how they relate to each other inside the shared `greeteat-staging`
-   project. It also enumerates the **co-tenant resources** that
-   Paperclip MUST NOT touch.
+1. **Deployed-resource model** — the GCP resources Terraform manages
+   inside the dedicated `paperclip-492823` project.
 2. **Application entities** — the entities the spec defines (board
    operator, invitation, agent, etc.) and how the deployment hosts them.
    These are owned by Paperclip's own database; the deployment provides
@@ -18,45 +16,25 @@ This document models two layers:
 
 ---
 
-## Layer 1 — Resources inside the shared `greeteat-staging` project
+## Layer 1 — Resources in the dedicated `paperclip-492823` project
 
-Single environment. Single project. Two co-tenants: pre-existing
-Firebase / App Engine workloads (out of scope, must not be touched)
-and the new Paperclip deployment (in scope).
-
-### Co-tenant resources Paperclip MUST NOT touch
-
-These already exist in `greeteat-staging` and belong to other GreetEat
-workloads. Paperclip's Terraform module set explicitly excludes them
-and must never reference them by ID. Any change to these is out of
-scope.
-
-| Resource | Owner | Purpose |
-|---|---|---|
-| Firebase project + Firestore | Firebase | GreetEat staging Firebase data |
-| App Engine default app + service accounts | App Engine | GreetEat staging App Engine workload |
-| Cloud Functions deployments | Cloud Functions | GreetEat scheduled jobs |
-| `firebase-schedule-createInvoice-us-central1` | Cloud Scheduler | Fires every 15 min into Pub/Sub for the Firebase function of the same name |
-| `firebase-schedule-sendMeetingReminders-us-central1` | Cloud Scheduler | Fires every 15 min into Pub/Sub for the Firebase function of the same name |
-| `gcf-sources-233990667256-us-central1` (GCS bucket) | Cloud Functions | Source archives for Cloud Functions |
-| `greeteat-staging.appspot.com` (GCS bucket) | App Engine | Default App Engine bucket |
-| `staging.greeteat-staging.appspot.com` (GCS bucket) | App Engine | Default App Engine staging bucket |
-| `us.artifacts.greeteat-staging.appspot.com` (GCS bucket) | App Engine / GCR | Default GCR-via-AR artifacts bucket |
-| `gcf-artifacts` Artifact Registry repo | Cloud Functions | Cloud Functions container images |
-| `app-350@greeteat-staging.iam.gserviceaccount.com` | App Engine | App Engine app service account |
-| `greeteat-staging-firebase-depl@…` | Firebase | Firebase deploy service account |
-| `firebase-adminsdk-eo4ha@…` | Firebase | Firebase Admin SDK service account |
-| `greeteat-staging@appspot.gserviceaccount.com` | App Engine | App Engine default service account |
-| `233990667256-compute@developer.gserviceaccount.com` | Compute | **Default Compute SA — broad legacy privileges, NEVER attach to Paperclip resources** |
+Single environment. Single dedicated project. No co-tenant workloads.
+**The only resource Paperclip explicitly avoids is the project's
+default Compute service account** (`233990667256-compute@developer.gserviceaccount.com`),
+which exists in every GCP project with broad legacy privileges and
+should never be attached to a Paperclip workload — Paperclip uses its
+own narrowly-scoped `paperclip-runtime-sa` instead.
 
 ### Paperclip resources (managed by Terraform in `infra/`)
 
-Single environment. All resources prefixed `paperclip-` or `paperclipai-`.
-All resources carry the label `service=paperclip` for billing attribution
-and quick filtering.
+Single environment. Resources are prefixed `paperclip-` or
+`paperclipai-` (good practice for IAM hygiene and quick filtering,
+not required for collision avoidance now that the project is
+dedicated). All resources carry the label `service=paperclip` for
+cost attribution.
 
 ```text
-GCP Project: greeteat-staging (existing, shared)
+GCP Project: paperclip-492823 (existing, shared)
 ├── APIs Paperclip enables (via infra/modules/apis/)
 │   ├── run.googleapis.com               (Cloud Run)
 │   ├── sqladmin.googleapis.com          (Cloud SQL)
@@ -72,7 +50,7 @@ GCP Project: greeteat-staging (existing, shared)
 │       aiplatform.googleapis.com (Vertex AI — enabled 2026-04-10),
 │       sql-component.googleapis.com, storage.googleapis.com
 │
-├── Paperclip-managed network (not in the App Engine default network)
+├── Paperclip-managed network
 │   ├── VPC: paperclip-vpc
 │   │   └── Subnet: paperclip-subnet (private, /28 reserved for VPC connector)
 │   ├── Serverless VPC Connector: paperclip-connector
@@ -83,14 +61,14 @@ GCP Project: greeteat-staging (existing, shared)
 │   └── Cloud SQL Instance: paperclip-pg (PostgreSQL 17)
 │       ├── Tier: db-custom-2-7680 (2 vCPU, 7.5 GiB)
 │       ├── Availability: REGIONAL (HA)
-│       ├── IP: PRIVATE only (no public IP, no peering with App Engine network)
+│       ├── IP: PRIVATE only (no public IP)
 │       ├── Database: paperclip
 │       ├── User: paperclip (password from Secret Manager)
 │       ├── Backups: enabled, 7-day point-in-time recovery
 │       └── Maintenance window: declared in tfvars
 │
 ├── Object storage
-│   └── GCS Bucket: greeteat-paperclip-uploads-prod
+│   └── GCS Bucket: paperclip-492823-uploads
 │       ├── Location: regional (us-central1)
 │       ├── Uniform bucket-level access: ENFORCED
 │       ├── Public access prevention: ENFORCED
@@ -119,10 +97,10 @@ GCP Project: greeteat-staging (existing, shared)
 │           └── Subject mapping: assertion.sub from token.actions.githubusercontent.com
 │
 ├── Compute
-│   ├── Service Account: paperclip-runtime-sa@greeteat-staging.iam.gserviceaccount.com
+│   ├── Service Account: paperclip-runtime-sa@paperclip-492823.iam.gserviceaccount.com
 │   │   └── Roles (scoped):
 │   │       ├── secretmanager.secretAccessor on the 4–5 paperclip-* secrets above
-│   │       ├── storage.objectUser on greeteat-paperclip-uploads-prod
+│   │       ├── storage.objectUser on paperclip-492823-uploads
 │   │       ├── cloudsql.client on paperclip-pg
 │   │       ├── aiplatform.user (Vertex Claude calls)
 │   │       └── logging.logWriter project-wide
@@ -143,11 +121,11 @@ GCP Project: greeteat-staging (existing, shared)
 │   │   │     PAPERCLIP_SECRETS_STRICT_MODE=true,
 │   │   │     PAPERCLIP_INSTANCE_ID=prod,
 │   │   │     S3_ENDPOINT=https://storage.googleapis.com,
-│   │   │     S3_BUCKET=greeteat-paperclip-uploads-prod,
+│   │   │     S3_BUCKET=paperclip-492823-uploads,
 │   │   │     S3_REGION=auto, LOG_LEVEL=info, LOG_FORMAT=json,
 │   │   │     CLAUDE_CODE_USE_VERTEX=1,
 │   │   │     CLOUD_ML_REGION=global,
-│   │   │     ANTHROPIC_VERTEX_PROJECT_ID=greeteat-staging,
+│   │   │     ANTHROPIC_VERTEX_PROJECT_ID=paperclip-492823,
 │   │   │     ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6
 │   │   └── Secrets (mounted from Secret Manager): the 4–5 paperclip-* secrets
 │   └── Cloud Run Job: paperclipai-doctor
@@ -178,7 +156,7 @@ GCP Project: greeteat-staging (existing, shared)
     │   ├── Cloud SQL paperclip-pg CPU
     │   ├── Cloud SQL paperclip-pg connections
     │   ├── Cloud SQL paperclip-pg free disk
-    │   ├── GCS greeteat-paperclip-uploads-prod error rate
+    │   ├── GCS paperclip-492823-uploads error rate
     │   ├── Daily doctor job failure
     │   └── Uptime Check failure
     └── Uptime Check: GET /health, every 1 min, from multiple regions
@@ -197,7 +175,7 @@ GCP Project: greeteat-staging (existing, shared)
 | Enabled APIs | First `terraform apply` | Almost never | If Paperclip is decommissioned (and the API isn't used by other workloads) |
 | paperclip-vpc + subnet + connector | First `terraform apply` | Almost never | Paperclip teardown |
 | paperclip-pg Cloud SQL instance | First `terraform apply` | Tier/HA changes (in-place), version bumps (planned outage) | Never automatically (`prevent_destroy=true`) |
-| greeteat-paperclip-uploads-prod GCS bucket | First `terraform apply` | Lifecycle/versioning changes (safe) | Never automatically (`prevent_destroy=true`) |
+| paperclip-492823-uploads GCS bucket | First `terraform apply` | Lifecycle/versioning changes (safe) | Never automatically (`prevent_destroy=true`) |
 | paperclip-* Secret Manager entries | Bootstrap scripts (`bootstrap-master-key.sh`, `bootstrap-gcs-hmac.sh`), then Terraform | New versions added on rotation | Old versions disabled, never deleted |
 | paperclip Cloud Run Service | First `terraform apply` | Every deploy (new revision) | Never automatically |
 | Cloud Run revisions | Every deploy | Immutable | Cloud Run retains the most recent N revisions; older ones GC'd by Cloud Run |
@@ -325,7 +303,7 @@ revoked  → (terminal)
 |---|---|
 | Board Operator, Invitation, Agent, Company, Agent Run | `paperclip-pg` Cloud SQL Postgres, Drizzle-managed schema |
 | Authentication Event | Cloud Logging → routed to `paperclip-audit-logs` log bucket |
-| Uploaded files (attachments) | `greeteat-paperclip-uploads-prod` GCS bucket via S3 interop API |
+| Uploaded files (attachments) | `paperclip-492823-uploads` GCS bucket via S3 interop API |
 | Master encryption key | `paperclip-master-key` Secret Manager → injected into Cloud Run service env |
-| LLM provider (Anthropic Claude) | **Vertex AI Model Garden** in `greeteat-staging`, called by Claude Code at runtime, authenticated via `paperclip-runtime-sa`'s `roles/aiplatform.user`. **No long-lived Anthropic API key.** |
+| LLM provider (Anthropic Claude) | **Vertex AI Model Garden** in `paperclip-492823`, called by Claude Code at runtime, authenticated via `paperclip-runtime-sa`'s `roles/aiplatform.user`. **No long-lived Anthropic API key.** |
 | GCS HMAC interop credentials | `paperclip-s3-access-key-id` + `paperclip-s3-secret-access-key` Secret Manager entries → injected into Cloud Run service env, consumed by Paperclip's S3 storage backend |

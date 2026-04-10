@@ -1,7 +1,7 @@
 # Quickstart: First Deploy of GreetEat Paperclip on GCP
 
 **Audience**: A platform operator deploying GreetEat Paperclip into the
-shared `greeteat-staging` GCP project for the first time, OR after a
+shared `paperclip-492823` GCP project for the first time, OR after a
 destructive teardown.
 **Outcome**: A working public Paperclip endpoint where US1, US2, and US3
 acceptance scenarios all pass.
@@ -19,7 +19,7 @@ single working session, with no manual console steps").
 **You need:**
 
 - Active GCP authentication as an account with `roles/owner` on
-  `greeteat-staging` (Victor confirmed on 2026-04-10)
+  `paperclip-492823` (Victor confirmed on 2026-04-10)
 - `gcloud` CLI installed and authenticated
 - `terraform` CLI installed (version pinned in `.tool-versions` /
   `terraform-version`)
@@ -33,8 +33,8 @@ single working session, with no manual console steps").
 
 **You do NOT need:**
 
-- A new GCP project (we use the existing `greeteat-staging`)
-- A billing-account grant (`greeteat-staging` already has billing
+- A new GCP project (we use the existing `paperclip-492823`)
+- A billing-account grant (`paperclip-492823` already has billing
   attached via `01BCB7-61A725-D6A2B5`)
 - A folder under the org (we don't need org-level permissions)
 - An Anthropic API key (Vertex Claude uses the service account)
@@ -56,57 +56,15 @@ not modify any GCP state.
 
 ```bash
 gcloud auth list                           # active account = victor@greeteat.com (or your operator)
-gcloud config set project greeteat-staging
-gcloud projects describe greeteat-staging \
+gcloud config set project paperclip-492823
+gcloud projects describe paperclip-492823 \
   --format="value(projectId,parent.id,lifecycleState)"
 ```
 
-Expected: project ID `greeteat-staging`, parent `768469506142`,
+Expected: project ID `paperclip-492823`, parent `768469506142`,
 lifecycle `ACTIVE`.
 
-### 1b. Refresh Application Default Credentials
-
-ADC is needed for Terraform's `google` provider when applying locally.
-This is a known cleanup item — without it, Terraform will fail with
-`serviceusage.services.use` permission errors.
-
-```bash
-gcloud auth application-default login
-# (the above also auto-attaches the quota project on success)
-```
-
-> **Local-dev caveat**: `victor@greeteat.com` Workspace policies enforce
-> aggressive RAPT (reauth proof token) expiry on `cloud-platform` scope —
-> ADC tokens stop working after ~10–15 minutes of idle and you have to
-> re-run the login. This makes sustained local testing painful.
->
-> **Recommended local-dev fix** (one-time): create a dedicated
-> `paperclip-local-dev` service account in `greeteat-staging` with
-> `roles/aiplatform.user` only, generate a JSON key, store it locally
-> (never commit), and point at it instead of user ADC:
->
-> ```bash
-> gcloud iam service-accounts create paperclip-local-dev \
->   --display-name="Paperclip local dev (Vertex Claude)" \
->   --project=greeteat-staging
->
-> gcloud projects add-iam-policy-binding greeteat-staging \
->   --member="serviceAccount:paperclip-local-dev@greeteat-staging.iam.gserviceaccount.com" \
->   --role="roles/aiplatform.user"
->
-> mkdir -p ~/.config/gcloud/keys
-> gcloud iam service-accounts keys create \
->   ~/.config/gcloud/keys/paperclip-local-dev.json \
->   --iam-account=paperclip-local-dev@greeteat-staging.iam.gserviceaccount.com
->
-> export GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/keys/paperclip-local-dev.json
-> ```
->
-> Service account tokens auto-refresh, no RAPT, no MFA prompts. **Production
-> Cloud Run is unaffected** — it uses metadata-server tokens for
-> `paperclip-runtime-sa`, not this key.
-
-### 1c. Verify Vertex AI Claude is reachable from the project
+### 1b. Verify Vertex AI Claude is reachable from the project
 
 This is a definitive end-to-end test that the LLM provider works. If
 it returns `HTTP 200`, the deployment can proceed.
@@ -114,7 +72,7 @@ it returns `HTTP 200`, the deployment can proceed.
 ```bash
 ACCESS_TOKEN=$(gcloud auth print-access-token)
 curl -sS -w "\nHTTP_STATUS=%{http_code}\n" -X POST \
-  "https://aiplatform.googleapis.com/v1/projects/greeteat-staging/locations/global/publishers/anthropic/models/claude-sonnet-4-6:rawPredict" \
+  "https://aiplatform.googleapis.com/v1/projects/paperclip-492823/locations/global/publishers/anthropic/models/claude-sonnet-4-6:rawPredict" \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -127,11 +85,11 @@ curl -sS -w "\nHTTP_STATUS=%{http_code}\n" -X POST \
 Expected: `HTTP_STATUS=200` and a Claude response containing `"ok"`.
 If you get `HTTP 404` with "Publisher Model … was not found", Claude
 access is not enabled in Model Garden — go to
-https://console.cloud.google.com/vertex-ai/model-garden?project=greeteat-staging,
+https://console.cloud.google.com/vertex-ai/model-garden?project=paperclip-492823,
 filter by Anthropic, find the Claude Sonnet 4.6 card, and click
 **Enable**.
 
-### 1d. Bootstrap the Terraform state bucket (one-time)
+### 1c. Bootstrap the Terraform state bucket (one-time)
 
 A GCS bucket holds Terraform state with object versioning enabled.
 This is created out-of-band before the first apply because Terraform
@@ -139,7 +97,7 @@ itself needs a state location.
 
 ```bash
 gcloud storage buckets create gs://paperclip-tf-state \
-  --project=greeteat-staging \
+  --project=paperclip-492823 \
   --location=us-central1 \
   --uniform-bucket-level-access \
   --public-access-prevention
@@ -232,17 +190,17 @@ The script (per `contracts/deploy-cli.md`):
 
 1. Preflight: refuses if anything is uncommitted, the digest doesn't
    exist, env is missing, `CLOUDSDK_CORE_PROJECT` is not
-   `greeteat-staging`, etc.
+   `paperclip-492823`, etc.
 2. `terraform plan` — review the diff. First-deploy will create a few
    dozen resources.
 3. Confirm — type `yes` to apply (or use `--auto-approve` in CI). For
-   the production single-env you'll be asked to type `greeteat-staging`.
+   the production single-env you'll be asked to type `paperclip-492823`.
 4. `terraform apply` — provisions:
    - Enables Paperclip-required APIs (run, sql, compute, secret, dns,
      vpcaccess, iam, iamcredentials, aiplatform if not already on)
    - `paperclip-vpc`, `paperclip-subnet`, `paperclip-connector`
    - `paperclip-pg` Cloud SQL instance (~15–25 minutes)
-   - `greeteat-paperclip-uploads-prod` GCS bucket
+   - `paperclip-492823-uploads` GCS bucket
    - Secret Manager IAM bindings (the secrets from step 2 must already
      exist)
    - `paperclip` Artifact Registry repository and IAM
@@ -405,8 +363,8 @@ on-call operator. To run it manually:
 
 ```bash
 gcloud logging read \
-  'logName="projects/greeteat-staging/logs/paperclip.audit"' \
-  --project=greeteat-staging \
+  'logName="projects/paperclip-492823/logs/paperclip.audit"' \
+  --project=paperclip-492823 \
   --limit=50 \
   --format=json
 ```
@@ -428,6 +386,5 @@ bucket (FR-020).
 | Sign-in succeeds but the dashboard is empty | Database connection failed at runtime | Cloud Run service logs for `DATABASE_URL` errors |
 | Uploads fail with auth errors | GCS HMAC credential mismatch | Re-run `bootstrap-gcs-hmac.sh` and verify Secret Manager versions |
 | Daily doctor fails | Drift in deployment-mode config or missing secret | Cloud Run Jobs → execution logs |
-| Claude Code fails with "401" or "PERMISSION_DENIED on aiplatform.endpoints.predict" | `paperclip-runtime-sa` missing `roles/aiplatform.user`, OR Vertex env vars not set on the Cloud Run service | Verify with `gcloud projects get-iam-policy greeteat-staging --flatten=bindings[].members --filter=bindings.members:paperclip-runtime-sa@*`; verify `CLAUDE_CODE_USE_VERTEX`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID` in the Cloud Run service env |
-| Vertex returns 404 "publisher model not found" | Claude not enabled in Model Garden | https://console.cloud.google.com/vertex-ai/model-garden?project=greeteat-staging — enable Claude Sonnet 4.6 |
-| Firebase scheduled jobs start failing | **Almost certainly unrelated to Paperclip**, but verify the `firebase-schedule-*` Cloud Scheduler jobs are still healthy. Paperclip resources should not affect them. | Cloud Scheduler in `us-central1` |
+| Claude Code fails with "401" or "PERMISSION_DENIED on aiplatform.endpoints.predict" | `paperclip-runtime-sa` missing `roles/aiplatform.user`, OR Vertex env vars not set on the Cloud Run service | Verify with `gcloud projects get-iam-policy paperclip-492823 --flatten=bindings[].members --filter=bindings.members:paperclip-runtime-sa@*`; verify `CLAUDE_CODE_USE_VERTEX`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID` in the Cloud Run service env |
+| Vertex returns 404 "publisher model not found" | Claude not enabled in Model Garden | https://console.cloud.google.com/vertex-ai/model-garden?project=paperclip-492823 — enable Claude Sonnet 4.6 |

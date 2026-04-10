@@ -3,14 +3,15 @@
 **Branch**: `001-deploy-gcp-public-auth` | **Date**: 2026-04-09 | **Last updated**: 2026-04-10 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `specs/001-deploy-gcp-public-auth/spec.md`
 **Constraints**: GCP-native, no AWS, no Supabase, no email infrastructure,
-**hosted in the existing `greeteat-staging` project** (shared with
-Firebase / App Engine workloads), **single environment** for v1, **Claude
-via Vertex AI** with no long-lived Anthropic API key.
+**hosted in the dedicated `paperclip-492823` project** (no co-tenant
+workloads), **single environment** for v1, **Claude via Vertex AI**
+with no long-lived Anthropic API key, **CI-only deployment** (no local
+Terraform workflow planned).
 
 ## Summary
 
 Deploy a single GreetEat instance of Paperclip's open-source control plane
-inside the **existing `greeteat-staging` GCP project** (project number
+inside the **existing `paperclip-492823` GCP project** (project number
 `233990667256`, parented to the `greeteat.com` organization). The project
 already has billing attached (`01BCB7-61A725-D6A2B5`) and Victor holds
 `roles/owner`, so the deployment can proceed without further org-level
@@ -51,15 +52,15 @@ justified in the Complexity Tracking section below.
 
 ## Technical Context
 
-**Hosting project**: `greeteat-staging` (existing, shared). Project
-number `233990667256`. Parent: `greeteat.com` org `768469506142`. Billing:
-`01BCB7-61A725-D6A2B5` (already attached). Co-tenant workloads: Firebase,
-App Engine, Cloud Functions (active — two scheduled jobs run every 15
-minutes). Paperclip resources MUST be strictly namespaced (`paperclip-*`
-or `paperclipai-*`) and labeled (`service=paperclip`) to coexist safely.
+**Hosting project**: `paperclip-492823` (dedicated, display name
+`paperclip`). Project number `233990667256`. Parent: `greeteat.com`
+org `768469506142`. Billing: `01BCB7-61A725-D6A2B5` (attached
+2026-04-10). **No co-tenant workloads**. Paperclip resources are
+prefixed `paperclip-*` / `paperclipai-*` and labeled
+`service=paperclip` as good practice for cost attribution and IAM
+hygiene.
 
-**Region**: `us-central1` (matches the existing project's defaults and
-where the Firebase scheduled jobs run).
+**Region**: `us-central1` (matches the operator's gcloud default).
 
 **Runtime (deployed application)**: Paperclip — Node.js + Express.js +
 React (Vite) UI, served from a single process on a configured port.
@@ -71,7 +72,7 @@ instance, treated as production), private IP only, accessed from Cloud
 Run via a Serverless VPC Connector. Drizzle ORM migrations applied by
 Paperclip on container boot.
 
-**Object storage**: One private GCS bucket (`greeteat-paperclip-uploads-prod`)
+**Object storage**: One private GCS bucket (`paperclip-492823-uploads`)
 with uniform bucket-level access enforced and public access prevention
 enabled. Versioning enabled. Accessed by Paperclip via the **GCS S3
 interop API** using HMAC keys stored in Secret Manager.
@@ -92,10 +93,10 @@ documented `PORT` env var honors it directly. Container listens on
 defaults to `127.0.0.1`).
 
 **LLM provider**: Anthropic Claude via Vertex AI Model Garden.
-Claude Sonnet 4.6 verified live on `greeteat-staging` on 2026-04-10
+Claude Sonnet 4.6 verified live on `paperclip-492823` on 2026-04-10
 with a `200 OK` predict response. Cloud Run service env carries
 `CLAUDE_CODE_USE_VERTEX=1`, `CLOUD_ML_REGION=global`,
-`ANTHROPIC_VERTEX_PROJECT_ID=greeteat-staging`,
+`ANTHROPIC_VERTEX_PROJECT_ID=paperclip-492823`,
 `ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6`. The service
 account holds `roles/aiplatform.user`. Paperclip's `claude_local`
 adapter spawns Claude Code, which inherits the service env and uses
@@ -117,7 +118,7 @@ are sufficient for the spec's requirements.
 **Email**: None. Out of scope per spec assumption "Email infrastructure".
 
 **IaC tool**: Terraform with the `google` and `google-beta` providers,
-state in a GCS bucket inside `greeteat-staging` (`paperclip-tf-state`),
+state in a GCS bucket inside `paperclip-492823` (`paperclip-tf-state`),
 object versioning on for state safety, provider versions pinned in
 `.terraform.lock.hcl`. GCS-backed Terraform state has built-in
 object-level locking via the Google provider, so no external lock
@@ -126,7 +127,7 @@ service is needed.
 **Container image build**: GitHub Actions workflow builds from a pinned
 Paperclip git tag, runs Trivy and Hadolint, authenticates to GCP via
 **project-scoped** Workload Identity Federation, and pushes to a new
-`paperclip` repository in Artifact Registry inside `greeteat-staging`
+`paperclip` repository in Artifact Registry inside `paperclip-492823`
 with `<paperclip-version>` and `<git-sha>` tags plus the immutable
 digest. Terraform pins the digest, never a tag.
 
@@ -159,9 +160,9 @@ contain the application source code itself.
 - No email infrastructure (Paperclip design)
 - No long-lived Anthropic API key (resolved by Vertex; preflight
   verified end-to-end on 2026-04-10)
-- **Shared GCP project with Firebase / App Engine workloads** — every
-  Paperclip resource MUST be prefixed `paperclip-` or `paperclipai-`
-  AND carry a `service=paperclip` label
+- **Dedicated GCP project** — no co-tenant workloads. Resource prefixes
+  (`paperclip-` / `paperclipai-`) and `service=paperclip` labels are
+  still applied as good practice for cost attribution and IAM hygiene.
 - **Single environment** — Principle II departure; see Complexity Tracking
 
 **Scale/Scope**: Single tenant (GreetEat). ≤ 50 board operators
@@ -190,11 +191,11 @@ initially, moderate agent count, single region, single environment.
   `roles/cloudsql.client` on its own DB,
   `roles/aiplatform.user` for Vertex Claude calls, and
   `roles/logging.logWriter` project-wide. **Crucially: never the
-  default Compute service account**, which exists in `greeteat-staging`
+  default Compute service account**, which exists in `paperclip-492823`
   with broad legacy privileges. ✅
 - **Change blast radius**: One Terraform module per logical concern.
-  PRs touch one concern at a time. Co-tenant Firebase / App Engine
-  resources are explicitly excluded from any module's scope. ✅
+  PRs touch one concern at a time. Dedicated project means no risk
+  of Paperclip changes affecting unrelated workloads. ✅
 - **Dependency pinning**: Paperclip release tag pinned in tfvars;
   Artifact Registry image referenced by digest in service spec; Cloud SQL
   engine version pinned; Terraform provider versions pinned in lockfile.
@@ -231,7 +232,7 @@ This is a deployment-configuration repo, not an application repo.
 ```text
 infra/
 ├── modules/                          # Reusable Terraform modules
-│   ├── apis/                         # Enable required APIs in greeteat-staging
+│   ├── apis/                         # Enable required APIs in paperclip-492823
 │   ├── network/                      # paperclip-vpc, subnet, Serverless VPC Connector
 │   ├── database/                     # paperclip-pg (Cloud SQL Postgres 17), private IP, backups
 │   ├── storage/                      # paperclip-uploads bucket, HMAC service account, lifecycle
@@ -246,7 +247,7 @@ infra/
 ├── envs/
 │   └── prod/                         # Single environment for v1
 │       ├── main.tf                   # Composes modules
-│       ├── backend.tf                # GCS state backend (greeteat-staging/paperclip-tf-state)
+│       ├── backend.tf                # GCS state backend (paperclip-492823/paperclip-tf-state)
 │       ├── terraform.tfvars          # Region, domain, paperclip_version, image_digest, sizing
 │       └── versions.tfvars           # paperclip_version + paperclip_image_digest
 ├── docker/
@@ -268,15 +269,16 @@ infra/
 
 **Structure Decision**: Single deployment repo with one Terraform module
 tree (`infra/modules/`) instantiated **once** in `infra/envs/prod/`
-(single environment). The previously-planned `infra/envs/staging` was
-removed as part of the Principle II departure documented in Complexity
-Tracking. Each module corresponds to one logical concern, satisfying the
-constitution's "one logical concern per change" rule. The
-`apis/` module replaces the previously-named `project-bootstrap/` module
-because the project pre-exists; `apis/` only enables APIs and creates
-the Terraform state bucket. The `workload-identity/` module is now
-explicit (it was previously folded into the bootstrap step) because
-WIF is now project-scoped rather than org-scoped.
+(single environment). `infra/envs/staging` is intentionally absent —
+single environment per the Complexity Tracking entry. Each module
+corresponds to one logical concern, satisfying the constitution's
+"one logical concern per change" rule. The `apis/` module enables
+the Paperclip-required APIs in the existing project (project create
+itself is a manual operator prerequisite per the quickstart). The
+`workload-identity/` module sets up project-scoped WIF for GitHub
+Actions — project-scoped because the operator does not hold org-level
+WIF permissions and project-scoped pools work identically for the
+GitHub → GCP path.
 
 ## Phase 0 → research.md
 
@@ -292,19 +294,18 @@ image build inputs and version pinning, and the explicit "no email
 infrastructure" decision. The Vertex Claude path is locked as the LLM
 provider with empirical verification recorded. No `NEEDS CLARIFICATION`
 items remain. Open follow-ups (e.g. master-key rotation cadence,
-local-dev service account JSON key for ADC RAPT workaround) are
-recorded as `Followups` and do not block Phase 1. The Paperclip
-`claude_local` preflight verification followup has been resolved as
-of 2026-04-10 — see research.md Decision 5.
+schema-drift CI gate, SBOM generation, Global LB + WAF for production
+traffic) are recorded as `Followups` and do not block Phase 1. The
+Paperclip `claude_local` preflight verification followup has been
+resolved as of 2026-04-10 — see research.md Decision 5.
 
 ## Phase 1 → data-model.md, contracts/, quickstart.md
 
 - [data-model.md](./data-model.md) — Models the deployed GCP resource
-  graph inside the shared `greeteat-staging` project, the application-level
+  graph inside the shared `paperclip-492823` project, the application-level
   entities the spec defines (Board Operator, Invitation, Agent, Company,
   Authentication Event, Agent Run), and the persistence rules +
-  lifecycle/state transitions for each. Explicitly enumerates the
-  co-tenant Firebase / App Engine resources that Paperclip MUST NOT touch.
+  lifecycle/state transitions for each.
 - [contracts/](./contracts/) — Four interface contracts the deployment
   exposes to its operators and to the running Paperclip process:
   - `container-image.md` — env-var inputs (including the new Vertex env
@@ -316,7 +317,7 @@ of 2026-04-10 — see research.md Decision 5.
   - `public-endpoint.md` — externally observable behavior of the public
     HTTPS URL (auth flows, error responses, health endpoint)
 - [quickstart.md](./quickstart.md) — Operator's first-deploy walkthrough,
-  from "shared `greeteat-staging` project with billing" to "US1/US2/US3
+  from "shared `paperclip-492823` project with billing" to "US1/US2/US3
   acceptance scenarios pass."
 
 ## Complexity Tracking
@@ -327,7 +328,7 @@ of 2026-04-10 — see research.md Decision 5.
 
 | Violation | Why needed | Simpler alternative rejected because |
 |-----------|------------|-------------------------------------|
-| **Single-environment deployment** (departs from Principle II — Environment Parity, which requires "at least two environments — staging and production") | (a) The shared-project pivot was forced by the operator's lack of `roles/billing.user` on the org's billing account, which prevented attaching billing to a freshly-created `paperclip` project. The existing `greeteat-staging` project had billing attached and operator owner-level access, so Paperclip was hosted there. (b) Standing up a *second* environment now would require another existing GCP project with billing already attached AND with no naming collisions for Paperclip resources — none of the other GreetEat projects (`greeteat-app`, `greeteat-cb454`, `greeteat-web-qa`) have been verified for that purpose, and creating a new one is blocked by the same billing-grant gap. (c) GreetEat's operator group is small (≤ 50) and Paperclip is an internal admin tool, not a customer-facing product. The business risk of a bad single-env deploy is bounded. | Two environments via two GCP projects: blocked by the billing-grant gap above. Two environments via two distinct deployments inside the same project: would defeat the isolation goal that motivates the principle (a misconfig in the "staging" deployment could affect the "production" deployment) and would double the IAM/resource bookkeeping inside an already-shared project. Two environments where staging is a smaller/cheaper Cloud Run instance pointing at the same Cloud SQL: would couple the data layer and create the worst kind of false-isolation. |
+| **Single-environment deployment** (departs from Principle II — Environment Parity, which requires "at least two environments — staging and production") | (a) **User direction**: the operator explicitly scoped this to a single environment ("we only need prod") on 2026-04-09 and confirmed it again on 2026-04-10 after the original billing-access blocker was resolved. (b) **Bounded blast radius**: GreetEat's operator group is small (≤ 50), Paperclip is an internal admin tool, not a customer-facing product. A bad single-env deploy affects internal operators only, not paying customers. (c) **Cost**: a second environment doubles the cloud-spend baseline (Cloud SQL HA is the dominant cost) for an internal admin tool that would otherwise have very low ongoing cost. (d) **Operational shape**: the deployment is rolled out from CI via WIF, doctor + smoke gates run on every deploy, and rollback is a one-command Cloud Run revision shift. The "implicit early-warning" benefit two-env normally provides is replaced by stronger gating and a daily live-environment doctor sweep. | Two environments via two GCP projects: doubles ongoing Cloud SQL + Cloud Run baseline cost for marginal benefit at this operator scale. Two environments via two distinct deployments inside the same project: defeats the isolation goal that motivates the principle (a misconfig in the "staging" deployment could affect the "production" deployment) and doubles the IAM/resource bookkeeping. Two environments where staging is a smaller/cheaper Cloud Run instance pointing at the same Cloud SQL: couples the data layer and creates the worst kind of false-isolation. |
 
 **Mitigations to compensate for the missing staging environment:**
 
@@ -354,15 +355,17 @@ of 2026-04-10 — see research.md Decision 5.
    announced to all operators and reviewed against the rollback plan.
 6. **`/speckit-clarify` bookmark**: when GreetEat scales beyond ≤ 50
    operators, or Paperclip becomes customer-facing, this Complexity
-   Tracking entry should be revisited. The fix is "create
-   `paperclip-prod` with billing attached and migrate." The data-model
-   document already enumerates everything that would need to move.
+   Tracking entry should be revisited. The fix is "create a second
+   GCP project (`paperclip-staging`) with billing attached, copy the
+   Terraform module set into a parallel `infra/envs/staging/`, and
+   pin a smaller Cloud SQL tier." The data-model document and
+   contracts already enumerate everything that would need to be
+   instantiated for a second environment.
 
 **Re-evaluation trigger**: This Complexity Tracking entry MUST be
-revisited if any of: (a) Victor obtains `roles/billing.user` on the
-org's billing account (eliminating the original blocker), (b) GreetEat
-operator count exceeds 50, (c) Paperclip becomes customer-facing for
-GreetEat in any way, (d) a second GreetEat tenant emerges that needs
-isolated Paperclip access. Any of these conditions makes the cost of
-maintaining the Principle II departure higher than the cost of
-standing up a second environment.
+revisited if any of: (a) GreetEat operator count exceeds 50,
+(b) Paperclip becomes customer-facing for GreetEat in any way,
+(c) a second GreetEat tenant emerges that needs isolated Paperclip
+access, (d) the user explicitly requests a staging environment.
+Any of these conditions makes the cost of maintaining the Principle II
+departure higher than the cost of standing up a second environment.

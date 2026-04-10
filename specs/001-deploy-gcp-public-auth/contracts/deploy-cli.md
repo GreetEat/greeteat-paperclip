@@ -31,8 +31,8 @@ The script REQUIRES the following to be set on the calling shell:
 
 | Variable | Purpose |
 |---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` (workstation) **or** WIF assertion (CI) | Authentication to the target project. |
-| `CLOUDSDK_CORE_PROJECT` | Target GCP project ID. Must equal `greeteat-staging`. The script refuses to run against any other project. |
+| WIF assertion from GitHub Actions | Authentication to the target project via the project-scoped Workload Identity Federation pool `paperclip-github`. The script is intended to run from CI; running from a workstation is not a supported v1 path. |
+| `CLOUDSDK_CORE_PROJECT` | Target GCP project ID. Must equal `paperclip-492823`. The script refuses to run against any other project. |
 | `GREETEAT_DEPLOY_OPERATOR` | Identifier of the human triggering the deploy. Recorded in audit logs. Refuses to run if unset. |
 
 ## Behavior
@@ -41,14 +41,14 @@ The script REQUIRES the following to be set on the calling shell:
    - the working tree has uncommitted changes (FR-013)
    - the current branch is not `main`
    - any required env var is unset
-   - `CLOUDSDK_CORE_PROJECT` is not `greeteat-staging`
+   - `CLOUDSDK_CORE_PROJECT` is not `paperclip-492823`
    - the Paperclip image digest in `versions.tfvars` does not exist in
      Artifact Registry
    - `gcloud auth list` shows no active account in CI mode
 2. **Plan** — `terraform -chdir=infra/envs/prod plan -out=plan.tfplan`.
    Output is preserved in `plan.tfplan` and printed to stdout.
 3. **Confirm** — interactive prompt unless `--auto-approve`. The prompt
-   requires the operator to type the project ID (`greeteat-staging`).
+   requires the operator to type the project ID (`paperclip-492823`).
 4. **Apply** — `terraform -chdir=infra/envs/prod apply plan.tfplan`.
    Captures the new Cloud Run revision name from the apply output.
 5. **Doctor gate** — `gcloud run jobs execute paperclipai-doctor --wait
@@ -102,11 +102,12 @@ The script REQUIRES the following to be set on the calling shell:
 
 ## Non-goals
 
-- Does not bootstrap the GCP project. The project (`greeteat-staging`)
-  pre-exists and is shared with other GreetEat workloads. The one-time
-  bootstrap consists of `bootstrap-master-key.sh`,
-  `bootstrap-gcs-hmac.sh`, and a single `terraform apply` to enable
-  APIs and create state — covered in `quickstart.md`.
+- Does not bootstrap the GCP project. The project (`paperclip-492823`)
+  is created manually before first deploy by an operator with org-level
+  `roles/resourcemanager.projectCreator`. The one-time bootstrap
+  consists of `bootstrap-master-key.sh`, `bootstrap-gcs-hmac.sh`, and
+  a single `terraform apply` to enable APIs and create state — covered
+  in `quickstart.md`.
 - Does not rotate secrets.
 - Does not promote between environments — there is only one environment
   in v1.

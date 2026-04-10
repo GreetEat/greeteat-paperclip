@@ -422,7 +422,7 @@ Each is reversible by amending this spec.
   only requires that the public API accepts authenticated agent traffic.
 - **Region**: A single GCP region is assumed for the initial deployment.
   `us-central1` is the chosen region (matches the existing
-  `greeteat-staging` project's defaults). Multi-region failover is out
+  `paperclip-492823` project's defaults). Multi-region failover is out
   of scope.
 - **Email infrastructure**: None. Paperclip's invitation flow is
   URL-based (auto-copied to clipboard, shared out-of-band by the inviter).
@@ -431,7 +431,7 @@ Each is reversible by amending this spec.
   (password reset, security alerts, etc.), this spec MUST be amended
   before that feature is built.
 - **LLM provider**: Anthropic Claude via **Vertex AI Model Garden**
-  on `greeteat-staging`. Claude Sonnet 4.6 was confirmed live with a
+  on `paperclip-492823`. Claude Sonnet 4.6 was confirmed live with a
   successful predict call on 2026-04-10. **Verified end-to-end on the
   same day** with a local Paperclip instance: an issue was assigned to
   a Claude agent, Paperclip's `claude_local` adapter spawned Claude
@@ -452,15 +452,16 @@ Each is reversible by amending this spec.
   the size of the GreetEat operator group, the absence of a second
   tenant, and the billing-access constraint that originally drove the
   shared-project decision.
-- **Hosting project**: The deployment lives in the existing GCP project
-  `greeteat-staging` (project number 233990667256), parented to the
-  `greeteat.com` organization. The project name is a historical artifact
-  — it now hosts both pre-existing Firebase / App Engine workloads and
-  the Paperclip production deployment. Strict resource namespacing
-  (`paperclip-*` / `paperclipai-*`) and a `service=paperclip` label on
-  every Paperclip-managed resource keep the two co-tenant. Tearing
-  Paperclip down later requires `terraform destroy` against the
-  Paperclip module set, not a project delete.
+- **Hosting project**: The deployment lives in a dedicated GCP project
+  `paperclip-492823` (display name `paperclip`, project number
+  `233990667256`), parented to the `greeteat.com` organization. The
+  project ID was auto-suffixed at creation because the friendly ID
+  was taken globally. Billing (`01BCB7-61A725-D6A2B5`) was attached
+  on 2026-04-10. **No other GreetEat workloads share the project.**
+  Resource naming (`paperclip-*` / `paperclipai-*`) and the
+  `service=paperclip` label remain in place as good practice for
+  cost attribution and IAM hygiene, not as collision-avoidance
+  requirements.
 - **Compliance regime**: No specific regime (GDPR, HIPAA, SOC 2, etc.) is
   assumed to apply. If one does, this spec MUST be amended before
   implementation begins.
@@ -475,15 +476,15 @@ Each is reversible by amending this spec.
 ### Decisions resolved in planning
 
 The constraint set evolved across several pivots: AWS → GCP, dedicated
-project → shared `greeteat-staging` project, two environments → single
+project → shared `paperclip-492823` project, two environments → single
 environment, Anthropic API key → Vertex AI Claude (no long-lived key),
 external IdP → built-in Better Auth, email-based invitations → URL-based
 invitations. Every sub-component choice is locked here against the
 final constraint set:
 
-- **Hosting project**: Existing `greeteat-staging` (shared with Firebase
-  / App Engine workloads), parented to greeteat.com org, billing already
-  attached.
+- **Hosting project**: Dedicated `paperclip-492823` (display name
+  `paperclip`), parented to greeteat.com org, billing
+  `01BCB7-61A725-D6A2B5` attached 2026-04-10. No co-tenant workloads.
 - **Environments**: One. Single-environment deployment, with a Complexity
   Tracking entry in `plan.md` documenting the departure from principle II.
 - **Region**: `us-central1`.
@@ -506,9 +507,10 @@ final constraint set:
   4.6 confirmed live on 2026-04-10), authenticated via Cloud Run service
   account's `roles/aiplatform.user` — no long-lived Anthropic API key.
 - **Email**: None. Paperclip uses URL-based invitations.
-- **Resource namespacing**: All Paperclip-managed resources MUST use the
-  `paperclip-` or `paperclipai-` prefix and carry the `service=paperclip`
-  label, to avoid collisions with Firebase / App Engine resources sharing
-  the project.
+- **Resource namespacing**: All Paperclip-managed resources SHOULD use
+  the `paperclip-` or `paperclipai-` prefix and carry the
+  `service=paperclip` label for cost attribution and quick filtering
+  in the GCP console. With a dedicated project this is no longer a
+  collision-avoidance concern, but remains good operational hygiene.
 
 Rationale and rejected alternatives for each are captured in `research.md`.
