@@ -1,0 +1,312 @@
+---
+
+description: "Task list for Deploy Paperclip to GCP in Public Authentication Mode"
+---
+
+# Tasks: Deploy Paperclip to GCP in Public Authentication Mode
+
+**Input**: Design documents from `specs/001-deploy-gcp-public-auth/`
+**Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, contracts/ ✅, quickstart.md ✅
+**Branch**: `001-deploy-gcp-public-auth`
+**Target project**: `paperclip-492823` (dedicated, billing attached, Vertex Sonnet 4.6 + Opus 4.6 enabled, no co-tenant workloads)
+
+**Tests**: This is a deployment-configuration repository, not an application repository. There are no unit tests to write — the "tests" are operator-runnable smoke tests that exercise the spec's P1 acceptance scenarios against a deployed environment, plus the `paperclipai doctor` Cloud Run Job that runs as a deploy gate and on a daily schedule.
+
+**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story. The feature is a deployment-spec repo, so tasks fall into three implicit categories distinguishable from the description text: **code creation** (Terraform modules, Dockerfile, scripts, CI workflows — most tasks), **operator one-time actions** (manually run commands like `terraform apply`, `gh workflow run`, `gcloud storage buckets create` — phrased as "Run …" or "Trigger …"), and **smoke tests / verification** (phrased as "Smoke test:" or "Verify:" or similar).
+
+## Format: `[ID] [P?] [Story?] Description with file path`
+
+- **[P]**: Can run in parallel (different files, no dependencies on incomplete tasks)
+- **[Story]**: Which user story this task belongs to (US1–US6, mapped from spec.md)
+- Each task description includes the exact file path or operator command target
+
+---
+
+## Phase 1: Setup (Repository scaffolding)
+
+**Purpose**: Lay down the directory structure, lockfiles, and tool configs that everything else builds on. No GCP changes, no secrets, no deploys.
+
+- [ ] T001 Create the `infra/` directory tree: `infra/modules/`, `infra/envs/prod/`, `infra/docker/`, `infra/scripts/`, plus root-level `.gitignore` entries for `*.tfplan`, `.terraform/`, `terraform.tfstate*`, `crash.log`
+- [ ] T002 [P] Pin Terraform version in `.tool-versions` (or `terraform-version`) at the project root
+- [ ] T003 [P] Add `infra/.tflint.hcl` configured with the Google provider plugin and the Google ruleset
+- [ ] T004 [P] Add `infra/.checkov.yml` baseline (Terraform/Google Cloud security scanning rules)
+- [ ] T005 [P] Add `infra/docker/.hadolint.yaml` baseline rules
+- [ ] T006 Create `infra/envs/prod/backend.tf` with the GCS state backend configured to use `gs://paperclip-tf-state` (bucket creation is T011, this is just the config that will use it)
+- [ ] T007 Create `infra/envs/prod/main.tf` as the empty composition file (terraform + provider blocks, empty module instantiations to be added in later phases)
+- [ ] T008 Create `infra/envs/prod/terraform.tfvars` with: `region="us-central1"`, `project_id="paperclip-492823"`, `domain` (operator-set), `cloud_sql_tier="db-custom-2-7680"`, `cloud_sql_availability_type="REGIONAL"`, `cloud_run_min_instances=2`, `cloud_run_max_instances`, `monthly_budget_usd`
+- [ ] T009 Create `infra/envs/prod/versions.tfvars` with placeholder `paperclip_version` and `paperclip_image_digest` (real values land in T024 / T025)
+- [ ] T010 Create `infra/envs/prod/.terraform.lock.hcl` after first `terraform init` so provider versions are locked
+
+**Checkpoint**: Repo structure exists, lint configs in place. No GCP state changed yet.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: Bring up the substrate that EVERY user story needs — the Terraform state bucket, the bootstrap secrets, the API enablement, the network, the secret store IAM, the Workload Identity Federation pool, and the first Paperclip image. Without this phase being complete, no user story can proceed.
+
+**⚠️ CRITICAL**: Tasks T011, T012, T013, T024, T025, T026 are operator-run actions (one-time). The rest are file-creation tasks that get applied via `terraform apply` in T026.
+
+### Bootstrap (operator one-time actions, before any apply)
+
+- [ ] T011 Manually create the Terraform state bucket: `gcloud storage buckets create gs://paperclip-tf-state --project=paperclip-492823 --location=us-central1 --uniform-bucket-level-access --public-access-prevention` then `gcloud storage buckets update gs://paperclip-tf-state --versioning` (per quickstart.md Section 1c)
+- [ ] T012 [P] Create `infra/scripts/bootstrap-master-key.sh`: generates 32 bytes via `openssl rand -base64 32`, creates the `paperclip-master-key` Secret Manager secret with the value as the first version, refuses to overwrite if the secret already exists, **never writes the value to disk**
+- [ ] T013 [P] Create `infra/scripts/bootstrap-gcs-hmac.sh`: creates `paperclip-storage-sa` service account, generates an HMAC key against it, stores `paperclip-s3-access-key-id` and `paperclip-s3-secret-access-key` in Secret Manager (the bucket-level IAM grant happens later in the storage module)
+
+### Foundational Terraform modules
+
+- [ ] T014 Create `infra/modules/apis/` (main.tf, variables.tf, outputs.tf): enable `run.googleapis.com`, `sqladmin.googleapis.com`, `compute.googleapis.com`, `secretmanager.googleapis.com`, `dns.googleapis.com`, `vpcaccess.googleapis.com`, `iam.googleapis.com`, `iamcredentials.googleapis.com`, `aiplatform.googleapis.com`, `artifactregistry.googleapis.com`, `cloudscheduler.googleapis.com`, `monitoring.googleapis.com`, `logging.googleapis.com` on `paperclip-492823`
+- [ ] T015 [P] Create `infra/modules/network/`: `paperclip-vpc` VPC, `paperclip-subnet` (private subnet in `us-central1` with /28 reserved range for the VPC connector), `paperclip-connector` Serverless VPC Connector, Private Services Access (peering with Google services for Cloud SQL private IP)
+- [ ] T016 [P] Create `infra/modules/secrets/`: imports the bootstrap-created Secret Manager entries (`paperclip-master-key`, `paperclip-database-url`, `paperclip-s3-access-key-id`, `paperclip-s3-secret-access-key`) and grants `roles/secretmanager.secretAccessor` to `paperclip-runtime-sa` on each (the SA itself is created in the compute module — module ordering handled in `main.tf`)
+- [ ] T017 [P] Create `infra/modules/artifact-registry/`: `paperclip` Docker repository in `us-central1`, IAM bindings allowing the WIF service account (T018) to push images
+- [ ] T018 Create `infra/modules/workload-identity/`: project-scoped WIF pool `paperclip-github`, GitHub OIDC provider (`https://token.actions.githubusercontent.com`), service account `paperclip-github-actions` with the IAM bindings needed for image push (`roles/artifactregistry.writer`) and Terraform applies (`roles/editor` scoped to the project, plus `roles/iam.serviceAccountUser` on `paperclip-runtime-sa`)
+
+### Container image (foundational because Cloud Run needs an image to point at)
+
+- [ ] T019 Create `infra/docker/Dockerfile`: multi-stage Node build of pinned Paperclip release. Build stage clones from `https://github.com/paperclipai/paperclip` at the tag in `paperclip_version`, runs install + build. Runtime stage uses a distroless Node base where possible, non-root user, no package managers, no `.env`, no service account JSON keys
+- [ ] T020 [P] Create `infra/docker/entrypoint.sh`: validates required env vars (`PAPERCLIP_SECRETS_MASTER_KEY`, `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `PAPERCLIP_DEPLOYMENT_MODE`, `PAPERCLIP_PUBLIC_URL`, `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`), verifies `DATABASE_URL` reachability, runs Paperclip's Drizzle migrations, then `exec`s the server process so it becomes PID 1
+- [ ] T021 Create `.github/workflows/build-image.yml`: WIF auth via `google-github-actions/auth`, build the Paperclip image from the pinned tag, run `hadolint`, run `trivy image` (fail on HIGH/CRITICAL with no fix), push to `us-central1-docker.pkg.dev/paperclip-492823/paperclip/paperclip` with tags `<paperclip-version>` and `<git-sha>`, output the immutable digest as a workflow output
+
+### First foundation apply (operator-run, after files exist)
+
+- [ ] T022 Wire the foundational modules into `infra/envs/prod/main.tf`: instantiate `apis`, `network`, `secrets`, `artifact-registry`, `workload-identity`. Compute, database, storage, edge, jobs, scheduler, observability stay commented out / unwired until their respective user-story phases.
+- [ ] T023 Run `bootstrap-master-key.sh` and `bootstrap-gcs-hmac.sh` against `paperclip-492823` (one-time, idempotent — refuses to overwrite existing secrets)
+- [ ] T024 Set the initial `paperclip_version` in `infra/envs/prod/versions.tfvars` (e.g. the latest Paperclip release tag)
+- [ ] T025 Trigger the first image build manually: `gh workflow run build-image.yml -f paperclip_version=<tag>`. After CI completes, capture the image digest from the workflow output and write it to `paperclip_image_digest` in `versions.tfvars`. Commit the digest update.
+- [ ] T026 `cd infra/envs/prod && terraform init && terraform apply` to provision the foundational layer (APIs, network, secrets IAM, Artifact Registry, WIF). This is the first real GCP-state change for Paperclip.
+
+**Checkpoint**: Foundation ready. APIs are enabled, the VPC + connector exist, secrets are accessible to the future runtime SA, an image is in Artifact Registry pinned by digest, and CI can authenticate to GCP via WIF. **All user stories can now begin.**
+
+---
+
+## Phase 3: User Story 1 — Board operator signs in (Priority: P1) 🎯 MVP
+
+**Goal**: A board operator opens the public Paperclip URL from any internet-connected browser, signs in via Better Auth, and reaches the dashboard.
+
+**Independent Test**: From an unprivileged network with no VPN, navigate to `https://<deployment-domain>`, complete sign-in with the seed operator credentials, confirm the dashboard renders within 10 seconds (SC-002).
+
+**This is the MVP phase.** It brings up the entire stateful core (Cloud SQL + GCS + Cloud Run + edge) so the public URL exists and works for authenticated operators. US2 and US3 add small additions on top.
+
+- [ ] T027 [US1] Create `infra/modules/database/`: `paperclip-pg` Cloud SQL instance — Postgres 17, REGIONAL availability type (HA), tier from tfvars, private IP only (no public IP), automated backups with 7-day point-in-time recovery, deletion protection enabled. Plus `paperclip` database, `paperclip` user with password generated and stored as `paperclip-database-url` in Secret Manager (the connection string — DB password is embedded in the URL). The module also opens the Private Services Access peering needed for Cloud Run → Cloud SQL.
+- [ ] T028 [P] [US1] Create `infra/modules/storage/`: `paperclip-492823-uploads` GCS bucket in `us-central1`, uniform bucket-level access enforced, public access prevention enforced, versioning enabled, lifecycle rule aborting incomplete multipart uploads after 7 days, label `service=paperclip`, `prevent_destroy=true`. Plus the bucket-scoped `roles/storage.objectUser` grant to `paperclip-storage-sa` (created by `bootstrap-gcs-hmac.sh`).
+- [ ] T029 [US1] Create `infra/modules/compute/` Part A: `paperclip-runtime-sa` service account with the narrow IAM grants — `roles/secretmanager.secretAccessor` on the four `paperclip-*` Secret Manager entries (handled by the secrets module's binding), `roles/cloudsql.client` on `paperclip-pg`, `roles/storage.objectUser` on the uploads bucket, `roles/logging.logWriter` project-wide. **Vertex grant comes in T034 (US3); not added yet.** Validation: the variable rejects the project's default Compute service account.
+- [ ] T030 [US1] Create `infra/modules/compute/` Part B: `paperclip` Cloud Run service. Image = `paperclip_image_digest` from tfvars (digest, never tag). `min-instances=2`, `max-instances` from tfvars, CPU=2, mem=2Gi. Service account = `paperclip-runtime-sa`. VPC connector = `paperclip-connector`. Plain env vars per `contracts/container-image.md`: `HOST=0.0.0.0`, `PAPERCLIP_DEPLOYMENT_MODE=public`, `PAPERCLIP_PUBLIC_URL=https://${var.domain}`, `PAPERCLIP_SECRETS_STRICT_MODE=true`, `PAPERCLIP_INSTANCE_ID=prod`, `S3_ENDPOINT=https://storage.googleapis.com`, `S3_BUCKET=paperclip-492823-uploads`, `S3_REGION=auto`, `LOG_LEVEL=info`, `LOG_FORMAT=json`. Secret-mounted env vars: `PAPERCLIP_SECRETS_MASTER_KEY`, `DATABASE_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`. Label `service=paperclip`. `enable-execute-command=true`.
+- [ ] T031 [P] [US1] Create `infra/modules/edge/`: Cloud DNS managed zone `paperclip-greeteat-zone` for the deployment domain, Cloud Run domain mapping binding the custom hostname to the `paperclip` service, A/AAAA/CNAME records pointing at `ghs.googlehosted.com`. Google-managed TLS certificate via the domain mapping (no manual cert provisioning).
+- [ ] T032 [US1] Wire `database`, `storage`, `compute`, `edge` modules into `infra/envs/prod/main.tf` (the previously commented-out lines from T022). Pass outputs between modules via locals.
+- [ ] T033 [US1] `terraform apply` against prod env. Cloud SQL provisioning is the long pole (~15–25 min). After apply: wait for the domain mapping to reach `READY` and the Google-managed cert to validate (5–15 min on first apply).
+- [ ] T034 [US1] Bootstrap the seed board operator account. Documented path: `gcloud run jobs execute paperclipai-bootstrap-admin --region=us-central1 --update-env-vars=BOOTSTRAP_OPERATOR_IDENTIFIER="<your-id>" --wait`. **Prerequisite**: Paperclip must ship a non-interactive `bootstrap-admin` command. Followup tracked in research.md if it doesn't yet.
+- [ ] T035 [US1] **US1 smoke test**: from a private browser on an unprivileged network, navigate to `https://<deployment-domain>`, complete sign-in with the seed operator, confirm the dashboard renders within 10 seconds (SC-002), confirm an unauthenticated request to a protected endpoint returns a non-leaky 401/redirect.
+
+**Checkpoint**: US1 is fully functional and independently testable. The public Paperclip endpoint exists, board operators can sign in, the dashboard works. **MVP complete.**
+
+---
+
+## Phase 4: User Story 2 — Invitation-only registration (Priority: P1)
+
+**Goal**: Open registration is refused at the application layer; only invitation-claim flows succeed.
+
+**Independent Test**: From an unauthenticated session, attempt to register through every visible path (sign-up form, OAuth federation, direct API). Confirm every path is refused with a non-leaky message. Then, signed in as the seed operator, issue an invitation, copy the URL, claim it from a separate browser, confirm success.
+
+**Implementation note**: Most of the work for US2 was already done in Phase 3 — `PAPERCLIP_DEPLOYMENT_MODE=public` (set in T030) puts Better Auth into authenticated mode where Paperclip's invitation-only policy is enforced at the application layer. This phase is verification-focused.
+
+- [ ] T036 [US2] Confirm `PAPERCLIP_DEPLOYMENT_MODE=public` is set on the live Cloud Run revision: `gcloud run services describe paperclip --region=us-central1 --project=paperclip-492823 --format="value(spec.template.spec.containers[0].env)"`. If not set, fix in `infra/modules/compute/` and re-apply.
+- [ ] T037 [US2] **US2 smoke test (unauthenticated rejection)**: from a private browser, attempt to register via every visible flow on the public URL. Confirm all paths return a non-leaky error indicating registration is by invitation only (FR-004). Document any path that doesn't return 403/404 — it's a Paperclip-side bug, not a deployment issue, but worth flagging upstream.
+- [ ] T038 [US2] **US2 smoke test (invitation claim)**: signed in as the seed operator, navigate to settings → operators → invite, generate an invitation, confirm the URL is auto-copied to clipboard, open the URL in a separate browser within the 10-minute TTL, complete the claim flow, confirm a new operator account is created and can sign in. Confirm that replaying the same invitation URL returns a non-leaky error.
+
+**Checkpoint**: US2 verified. The deployment refuses open registration and accepts invitation claims correctly.
+
+---
+
+## Phase 5: User Story 3 — Agent authentication (Priority: P1)
+
+**Goal**: A configured Paperclip agent can authenticate to the public API and execute work via Vertex AI Claude. Cross-company access is denied at the authorization layer.
+
+**Independent Test**: Create a test company and agent in the dashboard, generate an agent API key, hit `/api/agents/me` successfully, trigger a heartbeat, observe the agent run completes via Claude on Vertex (the agent's run log will show `msg_vrtx_*` IDs).
+
+- [ ] T039 [US3] In `infra/modules/compute/`, add `roles/aiplatform.user` to `paperclip-runtime-sa` for Vertex Claude access. This is the IAM grant validated end-to-end during Phase B verification.
+- [ ] T040 [US3] In `infra/modules/compute/` Cloud Run service env vars, add the four Vertex env vars: `CLAUDE_CODE_USE_VERTEX=1`, `CLOUD_ML_REGION=global`, `ANTHROPIC_VERTEX_PROJECT_ID=paperclip-492823`, `ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6` (per `contracts/container-image.md`)
+- [ ] T041 [US3] `terraform apply` to roll out the new IAM grant + env vars (Cloud Run creates a new revision)
+- [ ] T042 [US3] **US3 smoke test (agent auth)**: from the dashboard, create a test company and a test Claude agent. Generate an agent API key. From a separate terminal: `curl -H "Authorization: Bearer $AGENT_API_KEY" https://<deployment-domain>/api/agents/me` → confirm the response returns the agent's identity scoped to its company. Confirm an unauthenticated call returns a non-leaky 401.
+- [ ] T043 [US3] **US3 smoke test (Vertex round trip)**: trigger the test agent's first heartbeat (dashboard "Wake Now"). Inspect the agent's run log (`gcloud run jobs describe paperclipai-doctor` for inspecting service-side; or the dashboard's run log view). Confirm message IDs in the run log carry the `msg_vrtx_*` prefix (proof of Vertex routing) and `apiKeySource: "none"` (proof no API key was used). Confirm cross-company access attempts return 403 (try `/api/agents/<other-company-agent-id>` with the test agent's key).
+
+**Checkpoint**: US3 verified. Agents authenticate, are company-scoped at the authorization layer, and the LLM path runs through Vertex AI Claude Sonnet 4.6.
+
+---
+
+## Phase 6: User Story 4 — Reproducible deploy (Priority: P1)
+
+**Goal**: An authorized operator can deploy the GreetEat Paperclip stack from this repository to GCP, and apply subsequent updates, using only configuration that lives in the repo plus secrets resolved at runtime from Secret Manager. CI is the supported delivery path.
+
+**Independent Test**: From a clean state (or after `terraform destroy` of mutable resources), running `./scripts/deploy.sh --auto-approve` from CI produces a working public endpoint where US1, US2, and US3 acceptance scenarios pass.
+
+- [ ] T044 [US4] Create `infra/modules/jobs/`: `paperclipai-doctor` Cloud Run Job using the same image and resolved secrets as the service. Container command override: `["paperclipai", "doctor"]`. Same service account, same env vars (so it sees the same Vertex/secrets/DB config the live service does). Label `service=paperclip`.
+- [ ] T045 [P] [US4] Create `infra/scripts/doctor.sh`: wraps `gcloud run jobs execute paperclipai-doctor --wait --region=us-central1 --project=paperclip-492823`, parses the execution status, exits non-zero on doctor failure
+- [ ] T046 [US4] Create `infra/scripts/deploy.sh` per the full contract in `contracts/deploy-cli.md`. Synopsis: `./scripts/deploy.sh [--auto-approve]`. **No `ENVIRONMENT` positional, no `--skip-doctor`, no `--skip-smoke`** (single-env, gates are mandatory). Behavior: preflight (clean working tree, branch=main, `CLOUDSDK_CORE_PROJECT=paperclip-492823`, image digest exists in Artifact Registry, `GREETEAT_DEPLOY_OPERATOR` set), `terraform plan`, confirm (interactive unless `--auto-approve`), `terraform apply`, run doctor gate (exits 4 on fail and triggers rollback), run smoke test exercising US1+US3 (exits 5 on fail and triggers rollback), promote on success, write structured deploy-log entry to Cloud Logging under `greeteat.deploy`.
+- [ ] T047 [P] [US4] Create the smoke-test helper script that the deploy script invokes (or inline it in `deploy.sh`) — exercises US1 (HEAD against `/health` returns 200, GET `/` returns the React shell with a sign-in element) and US3 (from the deploy host, hit `/api/agents/me` with a stored test-agent key — credential lives in a build-time secret, not in the image)
+- [ ] T048 [US4] Create `.github/workflows/deploy.yml`: WIF auth via `google-github-actions/auth`, runs `./scripts/deploy.sh --auto-approve` on `main` merge or manual `workflow_dispatch`. Manual approval required for production via a GitHub environment with required reviewers. Sets `GREETEAT_DEPLOY_OPERATOR` from `github.actor`. Sets `CLOUDSDK_CORE_PROJECT=paperclip-492823`.
+- [ ] T049 [US4] Wire the `jobs` module into `infra/envs/prod/main.tf`
+- [ ] T050 [US4] `terraform apply` to provision the doctor Cloud Run Job
+- [ ] T051 [US4] **US4 smoke test (reproducible deploy)**: trigger `deploy.yml` from CI via manual `workflow_dispatch` against the current state, confirm the workflow runs through `terraform apply` → doctor → smoke → promote with no manual GCP console intervention. Verify the deploy-log entry appears in `greeteat.deploy` Cloud Logging.
+
+**Checkpoint**: US4 verified. The deploy workflow is the documented entry point for all subsequent changes.
+
+---
+
+## Phase 7: User Story 5 — Rollback (Priority: P2)
+
+**Goal**: When a deployment introduces a regression, the operator can roll the deployment back to the previous known-good revision within 30 minutes (SC-005).
+
+**Independent Test**: Deploy a deliberately-broken revision (e.g., bump the image digest to a known-bad SHA), execute `./scripts/rollback.sh --to-previous --reason "test rollback"`, verify the previous revision is back at 100% traffic and US1 acceptance passes within the 30-minute window.
+
+- [ ] T052 [US5] Create `infra/scripts/rollback.sh` per the full contract in `contracts/rollback-cli.md`. Synopsis: `./scripts/rollback.sh (--to-previous | --to-revision REV) --reason TEXT`. **`--reason` is always required** (single env IS production). Behavior: preflight (project=paperclip-492823, target revision exists, --to-previous resolves to a different revision), determine target, `gcloud run services update-traffic paperclip --to-revisions REV=100 --region=us-central1`, wait for Uptime Check to recover (≤ 5 min), execute the doctor Cloud Run Job against the rolled-back revision, write structured deploy-log entry with `event=rollback`, `from_revision`, `to_revision`, `reason`.
+- [ ] T053 [US5] **US5 smoke test (rollback recovery)**: from CI, deploy a known-bad revision (bump `paperclip_image_digest` in `versions.tfvars` to a sha256 that doesn't exist OR push an image that fails the doctor gate). Confirm `deploy.sh` fails at the doctor gate and auto-invokes rollback. Then test manual rollback: trigger `./scripts/rollback.sh --to-previous --reason "drill"` from the operator's CI workflow. Time-box the recovery to 30 minutes from invocation to all P1 acceptance scenarios passing on the rolled-back revision (SC-005).
+
+**Checkpoint**: US5 verified. Rollback is a one-command operation with a measured recovery time within SC-005's budget.
+
+---
+
+## Phase 8: User Story 6 — Observability (Priority: P2)
+
+**Goal**: A platform operator can see logs, metrics, and health signals for every component of the deployment from Cloud Logging + Cloud Monitoring, including authentication events (90-day retention, FR-020), agent activity (correlation IDs end-to-end), and infrastructure health.
+
+**Independent Test**: Generate a synthetic auth-failure burst and a synthetic agent error. Confirm both events are visible in the operator's observability surface within SC-006 (2 minutes), with enough context to identify the affected component and time window. Daily doctor runs and alerts on failure.
+
+- [ ] T054 [US6] Create `infra/modules/scheduler/`: `paperclipai-doctor-daily` Cloud Scheduler job (region `us-central1`, schedule daily, target = Cloud Run Jobs admin API to execute the `paperclipai-doctor` job from US4)
+- [ ] T055 [P] [US6] Create `infra/modules/observability/` Part A — log sinks and buckets: `paperclip-app-logs` log bucket (default retention), `paperclip-audit-logs` log bucket with **90-day retention** (FR-020), Log Router sink filtering `jsonPayload.service="paperclip" AND jsonPayload.event="auth"` → `paperclip-audit-logs`
+- [ ] T056 [P] [US6] Create `infra/modules/observability/` Part B — Cloud Monitoring uptime check: GET `https://<deployment-domain>/health` every 1 minute from multiple regions (cross-region observation per SC-001)
+- [ ] T057 [P] [US6] Create `infra/modules/observability/` Part C — alerting policies: Cloud Run `paperclip` 5xx rate, Cloud Run instance count = 0 (should never happen with `min-instances=2`), Cloud SQL `paperclip-pg` CPU, Cloud SQL connections, Cloud SQL free disk, Cloud Storage `paperclip-492823-uploads` 4xx/5xx rate, daily doctor job failure (from T054), Uptime Check failure (from T056), all filtered to `service=paperclip` where the metric supports labels
+- [ ] T058 [US6] Wire `scheduler` and `observability` modules into `infra/envs/prod/main.tf`
+- [ ] T059 [US6] `terraform apply` to provision the daily doctor scheduler, log buckets, log router sink, uptime check, and alerting policies
+- [ ] T060 [US6] **US6 smoke test (auth events)**: from a script, generate a sustained sign-in failure burst against the public URL. Within 2 minutes of the bursts (SC-006), query the audit log bucket: `gcloud logging read 'logName="projects/paperclip-492823/logs/paperclip.audit"' --project=paperclip-492823 --limit=50`. Confirm the failures appear with source, count, and timing. Confirm the failed-sign-in alerting policy (if defined) has fired.
+- [ ] T061 [US6] **US6 smoke test (agent traceability)**: trigger a test agent and inspect its run log via `gcloud logging read` filtered by the agent's correlation ID. Confirm the logs join authentication event → agent run → tool invocations end-to-end (FR-012, FR-021).
+- [ ] T062 [US6] **US6 smoke test (uptime + alerting)**: deliberately trigger an Uptime Check failure (e.g., briefly redirect traffic to a non-existent revision), confirm the alerting policy fires within the configured threshold and the on-call notification channel receives it. Restore traffic immediately.
+
+**Checkpoint**: US6 verified. All observability is wired up before the deployment is considered ready for sustained operation.
+
+---
+
+## Phase 9: Polish & Cross-Cutting Concerns
+
+**Purpose**: Documentation, CI gates that span all modules, and final verification that every spec success criterion holds.
+
+- [ ] T063 [P] Add `infra/README.md` documenting the layout: `modules/` purpose, `envs/prod/` composition, `docker/` build, `scripts/` operator entry points, `.github/workflows/` CI flow. Link back to `specs/001-deploy-gcp-public-auth/quickstart.md` as the canonical first-deploy guide.
+- [ ] T064 [P] Add `infra/CONTRIBUTING.md`: PR conventions for the deploy-spec repo (one logical concern per PR per the constitution, mandatory `terraform validate` + `tflint` + `checkov` gates, image-digest pinning rule, namespacing + label conventions, no manual `gcloud` changes outside the documented bootstrap scripts)
+- [ ] T065 [P] Create `.github/workflows/terraform-plan.yml`: PR-time workflow that runs `terraform fmt -check`, `terraform validate`, `tflint`, `checkov`, `hadolint` on the `Dockerfile`, and `terraform plan` against `infra/envs/prod/`. Posts the plan as a PR comment. Required check for merge to `main`.
+- [ ] T066 Add a tflint or checkov rule that requires every Paperclip-managed Terraform resource to carry the `service=paperclip` label. Wire it into the `terraform-plan.yml` workflow as a hard gate.
+- [ ] T067 **Full success-criteria audit**: walk through all 9 SCs from `spec.md` against the live deployment and document the result. SC-001 (99.5% availability — measured externally by the Uptime Check, baseline starts now), SC-002 (sign-in latency < 10s), SC-003 (invited operator first-time flow < 5 min), SC-004 (clean-state deploy in a single working session, already verified by T051), SC-005 (rollback < 30 min, verified by T053), SC-006 (event visibility < 2 min, verified by T060), SC-007 (zero unauthorized account creation, verified by T037), SC-008 (monthly forecast within budget — set up Cloud Billing budget alert in this task), SC-009 (daily doctor pass — verified by T059's scheduled job + alert).
+- [ ] T068 [P] Disable Claude Sonnet 4.6 on the stale `greeteat-staging` Vertex Model Garden subscription (the Phase B verification project). No cost while unused, but tidy up. Documented as a Followup in `research.md` Decision 11.
+
+---
+
+## Dependencies & Execution Order
+
+### Phase dependencies
+
+- **Phase 1 (Setup)**: No dependencies. Can start immediately.
+- **Phase 2 (Foundational)**: Depends on Phase 1 complete. **BLOCKS all user stories.**
+- **Phase 3 (US1)**: Depends on Phase 2 complete. Brings up the core stateful stack.
+- **Phase 4 (US2)**: Depends on Phase 3 complete (the running app must exist to verify invitation-only enforcement)
+- **Phase 5 (US3)**: Depends on Phase 3 complete (the running app must exist). T039–T040 add to the compute module which was created in Phase 3.
+- **Phase 6 (US4)**: Depends on Phase 3 complete (deploy script orchestrates Phase 3 modules)
+- **Phase 7 (US5)**: Depends on Phase 6 complete (rollback verification needs the deploy script to deliberately deploy a bad revision)
+- **Phase 8 (US6)**: Depends on Phase 3 complete (observability targets the live Cloud Run service). Can run in parallel with Phases 4, 5, 6, 7 once Phase 3 is done.
+- **Phase 9 (Polish)**: Depends on all preceding phases.
+
+### User-story dependencies (narrower view)
+
+- **US1** is the substrate. US2, US3 are small additions to the same Cloud Run service.
+- **US2** is mostly verification — depends on US1.
+- **US3** depends on US1 (compute module already exists) and adds the Vertex IAM grant + env vars.
+- **US4** depends on US1 (the resources to deploy must exist). US4's deploy script delivers US1/US2/US3 changes from CI thereafter.
+- **US5** depends on US4 (rollback verification needs the deploy script).
+- **US6** depends on US1 (observability targets the live service).
+
+### Within each Terraform module
+
+- Module file order: `variables.tf` → `main.tf` → `outputs.tf` → wire into `envs/prod/main.tf`
+- For modules with dependencies on other modules (e.g. `compute` needs `network`, `database`, `storage`, `secrets`): the wiring order in `envs/prod/main.tf` determines apply order via Terraform's DAG.
+
+---
+
+## Parallel Opportunities
+
+### Within Phase 1
+
+```text
+T002, T003, T004, T005 — different config files, can be authored in parallel
+```
+
+### Within Phase 2 (Foundational)
+
+```text
+T012, T013 — different bootstrap scripts, parallel
+T015 (network), T016 (secrets), T017 (artifact-registry) — different modules, parallel
+T020 (entrypoint.sh) — independent of T019 (Dockerfile) at file level, parallel
+```
+
+### Within Phase 3 (US1)
+
+```text
+T028 (storage module) — independent of T027 (database module), parallel
+T031 (edge module) — independent of T029/T030 (compute), parallel
+```
+
+The parallel ceiling for Phase 3 is roughly two streams: one per developer working on (database, edge) vs (storage, compute).
+
+### Within Phase 6 (US4)
+
+```text
+T045 (doctor.sh), T047 (smoke-test helper) — both independent of T046 (deploy.sh), parallel
+```
+
+### Within Phase 8 (US6)
+
+```text
+T055 (log buckets), T056 (uptime check), T057 (alert policies) — different files in the same module, parallel
+```
+
+### Cross-phase parallel (after Phase 3 lands)
+
+Phases 4, 5, 6, 7, 8 can all begin in parallel after Phase 3 is complete and apply has succeeded. Different developers can pick up different user stories independently. The only cross-phase dependency is US5 needing US4 (deploy script must exist before rollback can be tested).
+
+---
+
+## Implementation Strategy
+
+### MVP first (User Story 1 only)
+
+1. Complete Phase 1: Setup (~1 working session)
+2. Complete Phase 2: Foundational (~1 working session including bootstrap scripts running, first image build, first apply — Cloud SQL is the long pole)
+3. Complete Phase 3: User Story 1 (~1 working session including the second apply that brings up compute + database + storage + edge, plus the seed operator bootstrap)
+4. **STOP and VALIDATE**: Run T035 — the public URL exists and an operator can sign in. The MVP is delivered.
+5. Demo to GreetEat stakeholders if desired.
+
+After the MVP, US2 and US3 are tiny additions (mostly verification + IAM grant + 4 env vars) and can be added in a single PR.
+
+### Incremental delivery
+
+1. Complete Phases 1, 2, 3 → MVP (US1 working) → demo
+2. Add US2 and US3 (verification + Vertex IAM/env) → re-deploy → demo
+3. Add US4 (deploy script + CI workflow) → at this point, all subsequent changes ship via CI, not manual `terraform apply`
+4. Add US5 (rollback) → demonstrate via a deliberate bad-deploy drill
+5. Add US6 (observability) → wire up alerts and validate end-to-end traceability
+6. Phase 9 polish → final SC audit
+
+### Parallel team strategy
+
+With multiple developers after Phase 3 completes:
+- **Developer A**: US4 (deploy script + CI workflow + jobs module)
+- **Developer B**: US6 (observability module + scheduler module)
+- **Developer C** (after US4 lands): US5 (rollback script + drill)
+- **All developers**: pair on Phase 9 polish + SC audit
+
+---
+
+## Notes
+
+- **Tasks are organized by user story** so each story can be implemented and shipped independently. The dependency graph above captures the cross-story ordering.
+- **Manual operator actions** (T011, T023, T024, T025, T026, T033, T034, T041, T050, T059, T068) are unavoidable for one-time bootstrap and deploys. They're listed as tasks so the work is tracked, but they don't produce file diffs.
+- **No `ANTHROPIC_API_KEY`** is needed in any form — verified end-to-end during Phase B (committed in `55c33c2`). The compute module's secret list intentionally has 4 entries, not 5.
+- **Verify before each phase checkpoint** — phases compose, so a broken Phase 3 ripples into all subsequent phases. The doctor + smoke gates in T046 catch most regressions automatically.
+- **Avoid same-file conflicts** in parallel work: module files are independent, but `infra/envs/prod/main.tf` is touched by every "wire into main.tf" task — those should be merged sequentially with rebases, not in parallel branches.
+- **The `service=paperclip` label** is enforced by T066's CI gate; until that gate exists, follow the convention manually.
