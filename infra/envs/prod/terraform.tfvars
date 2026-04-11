@@ -28,7 +28,7 @@ domain = "paperclip.greeteat.example"
 # this deployment-spec repository. The WIF provider's attribute_condition
 # is restricted to assertions from this exact repo, so Actions in any
 # other repo cannot mint tokens against the paperclip-github WIF pool.
-github_repository = "paperclipai/paperclip-greeteat"
+github_repository = "GreetEat/greeteat-paperclip"
 
 # -----------------------------------------------------------------------------
 # Cloud SQL sizing
