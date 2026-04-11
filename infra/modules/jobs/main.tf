@@ -44,12 +44,30 @@ resource "google_cloud_run_v2_job" "bootstrap_ceo" {
         image = "${var.paperclip_image_url}@${var.paperclip_image_digest}"
 
         # CMD override: run the bootstrap-ceo CLI instead of the HTTP server.
-        # The command is non-interactive — confirmed against
-        # cli/src/index.ts:152-160 in the post-Phase-2 source-code audit.
-        # Paperclip's package.json wires `paperclipai` as a binary, so `pnpm`
-        # isn't needed; the binary is on PATH inside the upstream image.
-        command = ["paperclipai"]
+        #
+        # Paperclip's `paperclipai` is NOT a binary on PATH — it's a pnpm
+        # script defined in the root package.json:
+        #
+        #   "paperclipai": "node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts"
+        #
+        # So we have to invoke it the same way the script does. Earlier
+        # versions of this module used `command = ["paperclipai"]` which
+        # OVERRODE the upstream Docker ENTRYPOINT (docker-entrypoint.sh)
+        # with a non-existent binary, and the container failed to exec
+        # immediately. Caught the hard way during T034.
+        #
+        # By leaving `command` UNSET we keep the upstream entrypoint:
+        #   ENTRYPOINT ["docker-entrypoint.sh"]
+        # which does UID/GID remap and `exec gosu node "$@"`. So the args
+        # below run as the node user (not root) — same security posture
+        # as the live HTTP server.
+        #
+        # WORKDIR is /app in the upstream image, so the cli/* paths below
+        # are resolved relative to /app.
         args = [
+          "node",
+          "cli/node_modules/tsx/dist/cli.mjs",
+          "cli/src/index.ts",
           "auth",
           "bootstrap-ceo",
           "--base-url",
