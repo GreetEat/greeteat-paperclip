@@ -64,7 +64,11 @@ override.tf.json
 .env
 .env.*
 !.env.example
-secrets/
+# /secrets/ — anchored to repo root ONLY, so it doesn't accidentally match
+# infra/modules/secrets/ (the Terraform module that manages Secret Manager
+# IAM bindings, which is a code module we DO commit). For nested credential
+# dirs, use the *.key / *.pem / gcp-key*.json patterns below.
+/secrets/
 *.key
 *.pem
 gcp-key*.json
