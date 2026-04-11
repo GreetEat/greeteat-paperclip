@@ -1,0 +1,63 @@
+#!/bin/sh
+# =============================================================================
+# bootstrap-ceo wrapper for the Cloud Run Job
+# =============================================================================
+# Paperclip's `paperclipai auth bootstrap-ceo` CLI command refuses to run if
+# no config file exists at PAPERCLIP_CONFIG (set to
+# /paperclip/instances/default/config.json by upstream's Dockerfile). The
+# CLI was designed for developer-laptop usage where ~/.paperclip is
+# persistent; in a Cloud Run Job each execution starts with an empty
+# filesystem, so the file is never present and the CLI bails with:
+#
+#   ■  No config found at /paperclip/instances/default/config.json.
+#      Run paperclip onboard first.
+#
+# This wrapper materializes a minimal valid config.json (just enough to pass
+# Paperclip's zod schema validation), then exec's the bootstrap-ceo CLI. The
+# config file's values for database/auth/etc. are placeholders — the actual
+# values come from the env vars Cloud Run Jobs mounts (DATABASE_URL,
+# PAPERCLIP_PUBLIC_URL, BETTER_AUTH_SECRET, PAPERCLIP_SECRETS_MASTER_KEY).
+# bootstrap-ceo's resolveDbUrl() / resolveBaseUrl() check env vars FIRST, so
+# the placeholder strings are never read.
+#
+# templatefile() substitutes $${public_url} before this script reaches the
+# container, so the JSON heredoc below is single-quoted (<<'JSON') to prevent
+# the shell from trying to expand $$meta (a JSON key, not a shell variable).
+# =============================================================================
+set -e
+
+CONFIG_PATH="$${PAPERCLIP_CONFIG:-/paperclip/instances/default/config.json}"
+echo "Materializing minimal config at $$CONFIG_PATH"
+mkdir -p "$$(dirname "$$CONFIG_PATH")"
+
+cat > "$$CONFIG_PATH" <<'JSON'
+{
+  "$meta": {
+    "version": 1,
+    "updatedAt": "1970-01-01T00:00:00Z",
+    "source": "configure"
+  },
+  "database": {
+    "mode": "postgres",
+    "connectionString": "placeholder-DATABASE_URL-env-var-takes-precedence"
+  },
+  "logging": {
+    "mode": "cloud"
+  },
+  "server": {
+    "deploymentMode": "authenticated",
+    "exposure": "public",
+    "host": "0.0.0.0",
+    "port": 3100,
+    "serveUi": true
+  },
+  "auth": {
+    "baseUrlMode": "explicit",
+    "publicBaseUrl": "${public_url}",
+    "disableSignUp": true
+  }
+}
+JSON
+
+echo "Running bootstrap-ceo CLI"
+exec node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts auth bootstrap-ceo --base-url "${public_url}"

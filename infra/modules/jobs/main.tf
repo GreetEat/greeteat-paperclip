@@ -43,35 +43,31 @@ resource "google_cloud_run_v2_job" "bootstrap_ceo" {
       containers {
         image = "${var.paperclip_image_url}@${var.paperclip_image_digest}"
 
-        # CMD override: run the bootstrap-ceo CLI instead of the HTTP server.
+        # CMD override: run a wrapper shell script that materializes a
+        # minimal config.json (required by bootstrap-ceo even though it
+        # then prefers env vars), then exec's the CLI.
         #
-        # Paperclip's `paperclipai` is NOT a binary on PATH — it's a pnpm
-        # script defined in the root package.json:
+        # Background: Paperclip's bootstrap-ceo CLI was designed for
+        # developer-laptop usage where ~/.paperclip is persistent.
+        # readConfig() returns null when the file is missing and the
+        # command bails before checking env vars. Cloud Run Jobs start
+        # with empty filesystems, so the file is never present.
+        # bootstrap-ceo-wrapper.sh.tftpl creates a minimal valid config
+        # (just enough to pass the schema), then execs the CLI; the
+        # CLI's resolveDbUrl()/resolveBaseUrl() then prefer env vars over
+        # the placeholder values in the file.
         #
-        #   "paperclipai": "node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts"
-        #
-        # So we have to invoke it the same way the script does. Earlier
-        # versions of this module used `command = ["paperclipai"]` which
-        # OVERRODE the upstream Docker ENTRYPOINT (docker-entrypoint.sh)
-        # with a non-existent binary, and the container failed to exec
-        # immediately. Caught the hard way during T034.
-        #
-        # By leaving `command` UNSET we keep the upstream entrypoint:
-        #   ENTRYPOINT ["docker-entrypoint.sh"]
-        # which does UID/GID remap and `exec gosu node "$@"`. So the args
-        # below run as the node user (not root) — same security posture
-        # as the live HTTP server.
-        #
-        # WORKDIR is /app in the upstream image, so the cli/* paths below
-        # are resolved relative to /app.
+        # `command` is left UNSET so the upstream entrypoint
+        # (docker-entrypoint.sh -> gosu node "$@") stays in place and the
+        # script runs as the node user, same as the HTTP server. WORKDIR
+        # is /app in the upstream image; the script execs node against
+        # cli/node_modules/tsx/dist/cli.mjs which is relative to /app.
         args = [
-          "node",
-          "cli/node_modules/tsx/dist/cli.mjs",
-          "cli/src/index.ts",
-          "auth",
-          "bootstrap-ceo",
-          "--base-url",
-          var.public_url,
+          "sh",
+          "-c",
+          templatefile("${path.module}/bootstrap-ceo-wrapper.sh.tftpl", {
+            public_url = var.public_url
+          }),
         ]
 
         # Same env shape as the Cloud Run service (compute module). The
