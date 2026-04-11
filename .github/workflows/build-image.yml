@@ -16,9 +16,9 @@ name: Build Paperclip image
 #   upstream changes.
 #
 # What this workflow does:
-#   1. Checks out THIS deployment-spec repo (for versions.tfvars)
+#   1. Checks out THIS deployment-spec repo (for versions.auto.tfvars)
 #   2. Determines the paperclip_version to build (from workflow input or
-#      versions.tfvars)
+#      versions.auto.tfvars)
 #   3. Clones upstream Paperclip at the exact pinned tag
 #   4. Authenticates to GCP via project-scoped Workload Identity Federation
 #   5. Builds the image using upstream's Dockerfile in the cloned tree
@@ -37,7 +37,7 @@ on:
         type: string
   pull_request:
     paths:
-      - "infra/envs/prod/versions.tfvars"
+      - "infra/envs/prod/versions.auto.tfvars"
       - ".github/workflows/build-image.yml"
 
 env:
@@ -67,7 +67,7 @@ jobs:
           if [ -n "${{ github.event.inputs.paperclip_version }}" ]; then
             ver="${{ github.event.inputs.paperclip_version }}"
           else
-            ver=$(grep -E '^paperclip_version' infra/envs/prod/versions.tfvars \
+            ver=$(grep -E '^paperclip_version' infra/envs/prod/versions.auto.tfvars \
               | sed -E 's/.*"([^"]+)".*/\1/')
           fi
           if [ -z "$ver" ] || [ "$ver" = "TBD" ]; then
@@ -147,7 +147,7 @@ jobs:
             echo ""
             echo "### Next step"
             echo ""
-            echo "Update \`infra/envs/prod/versions.tfvars\`:"
+            echo "Update \`infra/envs/prod/versions.auto.tfvars\`:"
             echo ""
             echo '```hcl'
             echo "paperclip_version      = \"${{ steps.version.outputs.paperclip_version }}\""

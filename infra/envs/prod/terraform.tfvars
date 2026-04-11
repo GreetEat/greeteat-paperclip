@@ -4,8 +4,10 @@
 # This file IS committed (no secrets here). Secrets live in Secret Manager
 # and are mounted into Cloud Run by the compute module.
 #
-# Pinned Paperclip version + image digest live in the sibling versions.tfvars
-# file so version bumps are a separate, reviewable diff.
+# Pinned Paperclip version + image digest live in the sibling
+# versions.auto.tfvars file so version bumps are a separate, reviewable
+# diff. The .auto.tfvars suffix makes Terraform auto-load the file
+# alongside terraform.tfvars without an explicit -var-file flag.
 
 # -----------------------------------------------------------------------------
 # Project & region (locked)
