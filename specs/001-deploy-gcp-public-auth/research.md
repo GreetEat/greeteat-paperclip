@@ -905,6 +905,145 @@ because the random URL would change on service recreation.
 
 ---
 
+## Decision 19 — Vertex partner-model `web_search` allowed via project-level org policy override
+
+**Decision**: A project-level override on
+`constraints/vertexai.allowedPartnerModelFeatures` allows
+`web_search` for the three Anthropic models we run
+(`claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`):
+
+```yaml
+name: projects/paperclip-492823/policies/vertexai.allowedPartnerModelFeatures
+spec:
+  rules:
+  - values:
+      allowedValues:
+      - publishers/anthropic/models/claude-opus-4-6:web_search
+      - publishers/anthropic/models/claude-sonnet-4-6:web_search
+      - publishers/anthropic/models/claude-haiku-4-5:web_search
+```
+
+Currently applied via direct `gcloud org-policies set-policy`
+(2026-04-11) — NOT yet codified in terraform. Codifying it as a
+`google_org_policy_policy` resource is a Followup.
+
+**Rationale**: the greeteat.com Cloud Org enforces a `denyAll: true`
+policy on this constraint by default, which blocks ALL Anthropic
+partner-model features (not just `web_search`). Without an override,
+the agent fails on every `WebSearch` / `WebFetch` tool call with:
+
+    API Error: 400 Organization Policy constraint
+    constraints/vertexai.allowedPartnerModelFeatures violated for
+    `projects/280667224791` attempting to use a disallowed feature
+    web_search for Partner model claude-opus-4-6.
+
+The agent worked around it by spawning `curl` and parsing HTML,
+which is functional but burns more tokens because Claude has to
+reason about raw markup instead of getting ranked, summarized
+results from Vertex's hosted search backend. Enabling `web_search`
+makes research-heavy agent workflows materially more efficient.
+
+**Why project-level override (not org-level)**: project-level
+overrides have a narrower blast radius. The override ONLY affects
+`paperclip-492823`; other projects in the greeteat.com org continue
+to inherit the org-wide deny-all. If we eventually want web_search
+on multiple projects, we can either repeat the override per-project
+or relax the org-level policy.
+
+**Required role to apply the override**: `roles/orgpolicy.policyAdmin`
+granted at the **organization level**. Critically, this role is NOT
+grantable at the project level — `gcloud projects add-iam-policy-
+binding` rejects it with "Role roles/orgpolicy.policyAdmin is not
+supported for this resource". Project Owner does not include it.
+The role must come from one of:
+
+1. An actual Cloud IAM Org Admin granting it directly
+2. A Workspace Super Admin self-granting via the
+   admin.google.com → Account → Admin roles → "Google Cloud
+   Platform admin" Workspace pre-built role, which then maps to
+   Cloud IAM Org Admin (the Workspace ↔ Cloud IAM bridge)
+
+We hit this hard during the first deploy because `Organization
+Administrator` and `Organization Policy Administrator` are TWO
+DIFFERENT roles with confusingly similar names. The first is broad
+(`roles/resourcemanager.organizationAdmin`) and does NOT include
+org-policy management. The second
+(`roles/orgpolicy.policyAdmin`) is the specific one needed.
+
+**Followups**:
+
+1. Codify the override as a `google_org_policy_policy` terraform
+   resource so the policy state is reproducible and a fresh
+   deployment doesn't require an out-of-band manual fix
+2. Add `claude_*` models to the override allowlist as we adopt them
+3. Audit the org policy at the org level once we have org admin
+   access — there may be other deny-all constraints we haven't
+   discovered yet (e.g. on Vertex regions, model versions, etc.)
+
+---
+
+## Decision 20 — Phase B verification was a false positive; in-container diagnostic Cloud Run Jobs are the new gold standard
+
+**Decision**: The "Vertex Claude verified end-to-end on 2026-04-10"
+checkpoint we recorded in Decision 5 was a **false positive**. It
+proved Vertex Claude works **from the operator's laptop with a
+gcloud user ADC**, NOT from inside the deployed Cloud Run container
+with the runtime SA's identity, image, network, and env. Future
+verification of any service-side code path MUST use a one-off Cloud
+Run Job that runs the same image, runtime SA, and VPC connector as
+the live service.
+
+**Rationale**: during the first Phase 3 deploy, the CEO agent's
+heartbeat run failed silently with SIGPIPE crashes. Initial debugging
+went down a wrong path (we suspected Vertex auth, missing models,
+container exec issues) because the Phase B "verification" had given
+us false confidence that Vertex Claude was working. The Phase B
+test was actually:
+
+1. Run `paperclipai dev` on operator's laptop
+2. Operator has `claude` (Claude Code CLI) installed globally on host
+3. Paperclip's `claude_local` adapter shells out to the host's
+   `claude` binary
+4. Host's `claude` reads operator's gcloud ADC and calls Vertex
+5. Vertex returns a response → operator sees agent activity
+
+This proved nothing about the deployed image, the runtime SA, or
+the Cloud Run network path. None of those layers were exercised.
+The operator may have also had `ANTHROPIC_API_KEY` set in their
+shell, which would have routed through the direct Anthropic API
+instead of Vertex entirely — making the test even more misleading.
+
+The actual root cause of the Phase 3 failure turned out to be a
+combination of (a) wrong model identifier (the dashboard was
+configured for `claude-opus-4-6` but my diagnostic tested
+`claude-sonnet-4-5` which isn't subscribed) and (b) the org policy
+blocking `web_search` (which caused the agent to fall back to
+`curl` and confused the SIGPIPE-trace investigation).
+
+**Replacement verification pattern**: spawn a one-off Cloud Run
+Job using the production image, runtime SA, VPC connector, and env
+vars, with a CMD that runs the actual code path you want to test.
+The job runs in ~60 seconds, costs ~$0, and gives a definitive
+answer. Skeleton in `quickstart.md` "Things that bit us" → "Diagnostic
+Cloud Run Jobs are an underused tool".
+
+We used this pattern successfully to:
+
+1. Confirm the `claude` binary IS in the production image and runs
+2. Confirm the runtime SA reaches the metadata server
+3. Confirm `claude-sonnet-4-6` and `claude-opus-4-6` work via Vertex
+   from inside the container
+4. Identify which model identifiers are subscribed vs not
+5. Test the bootstrap-ceo wrapper before committing to terraform
+
+**Codification**: add a future task (T067a) to formalize the
+diagnostic-job pattern as a script (`infra/scripts/diag.sh`) that
+takes a shell command as input and runs it inside a one-off Cloud
+Run Job with the production image + identity. This would be useful
+both for break-glass debugging and for CI smoke tests.
+
+---
+
 ## Resolved spec deferrals
 
 The spec's "Decisions deferred to planning" section listed six items;
@@ -944,6 +1083,20 @@ no-email + shared-project + single-env + Vertex-Claude constraint set:
   developer-tooling layer with newer Go binaries. Currently
   `.trivyignore` carries 13 documented allowlist entries; re-review
   on every Paperclip version bump.
+- **Codify the `vertexai.allowedPartnerModelFeatures` org policy
+  override** as a `google_org_policy_policy` terraform resource so
+  the policy state is reproducible across redeploys (Decision 19).
+- **Formalize the diagnostic-Cloud-Run-Job pattern** as
+  `infra/scripts/diag.sh` — takes a shell command, runs it inside
+  a one-off Cloud Run Job using the production image + runtime SA +
+  VPC connector, prints the output, deletes the job. Used during
+  the first deploy to verify Vertex Claude end-to-end without
+  redeploying the live service. Decision 20 has the rationale.
+- **Decision 5 verification claim is RETRACTED** as a false positive
+  — see Decision 20. The real "Vertex Claude works in production"
+  proof point is the CEO heartbeat run on 2026-04-11 (run id
+  `7e9592b8-2039-4e9c-8ff3-596bb3dd4a68`), not the laptop test from
+  2026-04-10.
 - **Master key rotation cadence and procedure** (Decision 5)
 - **Cloud SQL password rotation script** (Decision 3)
 - **Schema-drift CI gate** before first production migration

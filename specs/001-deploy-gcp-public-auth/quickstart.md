@@ -701,3 +701,167 @@ allowlist, triage it (is it reachable in Paperclip's runtime path?)
 and either fix upstream or add to the allowlist with documented
 justification. Re-review the allowlist on every Paperclip version
 bump.
+
+### Agents fail or fall back to curl when calling web_search
+
+**Symptom**: agent run logs show `WebFetch` / `WebSearch` tool calls
+returning errors like:
+
+    API Error: 400
+    Organization Policy constraint
+    constraints/vertexai.allowedPartnerModelFeatures violated for
+    `projects/280667224791` attempting to use a disallowed feature
+    web_search for Partner model claude-opus-4-6.
+
+The greeteat.com Cloud Org enforces a `denyAll: true` policy on the
+`vertexai.allowedPartnerModelFeatures` constraint by default, which
+blocks Claude's built-in `web_search` (and presumably other partner
+model features). Agents detect the failure and fall back to spawning
+`curl` to fetch web pages, which works but is less efficient — Claude
+has to parse raw HTML instead of getting ranked, summarized results.
+
+**Fix**: set a project-level override that allows `web_search` for
+the specific Anthropic models you've enabled in Model Garden.
+
+Required role: `roles/orgpolicy.policyAdmin` granted at the
+**organization level** (`organizations/<org-id>`). Project Owner does
+NOT include this — you have to be either:
+
+- An actual Cloud IAM Organization Administrator, OR
+- A Workspace Super Admin who self-grants the `Google Cloud Platform
+  admin` Workspace pre-built role (which then maps to Cloud IAM Org
+  Admin), OR
+- Granted `roles/orgpolicy.policyAdmin` at the org level by someone
+  else who has it
+
+Once you have the role, the override is one command. Save this YAML
+to a tempfile and apply:
+
+```yaml
+# /tmp/web-search-policy.yaml
+name: projects/paperclip-492823/policies/vertexai.allowedPartnerModelFeatures
+spec:
+  rules:
+  - values:
+      allowedValues:
+      - publishers/anthropic/models/claude-opus-4-6:web_search
+      - publishers/anthropic/models/claude-sonnet-4-6:web_search
+      - publishers/anthropic/models/claude-haiku-4-5:web_search
+```
+
+```bash
+# enable the API on the project (one-time, idempotent)
+gcloud services enable orgpolicy.googleapis.com \
+  --project=paperclip-492823
+
+# apply the override
+gcloud org-policies set-policy /tmp/web-search-policy.yaml
+
+# verify the effective policy reflects the override
+gcloud org-policies describe \
+  constraints/vertexai.allowedPartnerModelFeatures \
+  --project=paperclip-492823 \
+  --effective
+```
+
+The effective policy should now show your three `is:publishers/...`
+allowedValues instead of `denyAll: true`. Vertex picks up the change
+on the next request — no Cloud Run redeploy needed.
+
+Add new model variants (e.g., when Claude 4.7 ships) by editing the
+YAML and re-running `set-policy`.
+
+### "Model not available on your vertex deployment" with confusing fallback suggestions
+
+**Symptom**: from inside a Cloud Run container or via `curl` to Vertex,
+Claude Code reports:
+
+    The model claude-sonnet-4-5 is not available on your vertex
+    deployment. Try --model to switch to claude-sonnet-4@20250514,
+    or ask your admin to enable this model.
+
+**This error is misleading.** It suggests the named model isn't
+enabled, but the actual cause is almost always one of:
+
+1. **Wrong model identifier**: e.g. you typed `claude-sonnet-4-5` but
+   the only Sonnet variant subscribed in your project's Model Garden
+   is `claude-sonnet-4-6` (or vice versa). Vertex Model Garden
+   enablement is **per model variant** — Sonnet 4.5 and Sonnet 4.6
+   are separate subscriptions, and the dashboard / `claude --model`
+   short names may not match the actual subscribed variants
+   one-to-one.
+2. **Wrong region**: Anthropic models on Vertex are only enabled in
+   specific regions (typically `us-east5`, `europe-west1`, plus
+   `global`). If your `CLOUD_ML_REGION` env var or the per-call
+   region doesn't match where the model was enabled, you get this
+   error too.
+3. **Model not enabled at all**: the rare case where the operator
+   genuinely forgot to click "ENABLE" in the Cloud Console.
+
+**Diagnostic recipe**: spawn a one-off Cloud Run Job using the same
+image, runtime SA, and VPC connector, with a CMD that loops over
+candidate model identifiers and tries `claude --print --model
+$MODEL`. The ones that respond with "Hi! How can I help you today?"
+are the ones actually enabled. Example diagnostic JSON spec lives in
+`infra/scripts/` (TODO: codify as a script — for now see the
+2026-04-11 deploy log in research.md Decision 18+).
+
+The diagnostic is often more useful than the Cloud Console because
+it tests with the exact identity, network path, and env that the
+real agent uses.
+
+### Diagnostic Cloud Run Jobs are an underused tool
+
+When something goes wrong with a Cloud Run service and you need to
+test "what happens when this image runs as this SA on this VPC", the
+fastest path is **NOT** to add print statements and rebuild the
+image — it's to spin up a **one-off Cloud Run Job** using the same
+image and a CMD that runs your diagnostic shell script. Create →
+execute → read logs → delete, all via REST API or `gcloud`.
+
+This pattern saved hours during the first deploy when we had to
+verify Claude Code was reachable, models were enabled, and the
+runtime SA could call Vertex. The job costs essentially nothing
+(charged by the second of compute), runs in ~60 seconds, and gives
+you the actual answer instead of inferred guesses.
+
+**Skeleton** (POST to Cloud Run Jobs v2 API with auth header
+`Bearer $(gcloud auth print-access-token)`):
+
+```json
+{
+  "labels": { "service": "paperclip-diagnostic" },
+  "template": {
+    "template": {
+      "serviceAccount": "paperclip-runtime-sa@paperclip-492823.iam.gserviceaccount.com",
+      "vpcAccess": {
+        "connector": "projects/paperclip-492823/locations/us-central1/connectors/paperclip-connector",
+        "egress": "PRIVATE_RANGES_ONLY"
+      },
+      "maxRetries": 0,
+      "timeout": "300s",
+      "containers": [{
+        "image": "us-central1-docker.pkg.dev/paperclip-492823/paperclip/paperclip@sha256:<digest>",
+        "command": ["sh"],
+        "args": ["-c", "<your shell script here>"],
+        "env": [
+          {"name": "CLAUDE_CODE_USE_VERTEX", "value": "1"},
+          {"name": "CLOUD_ML_REGION", "value": "global"},
+          {"name": "ANTHROPIC_VERTEX_PROJECT_ID", "value": "paperclip-492823"},
+          {"name": "HOME", "value": "/paperclip"}
+        ]
+      }]
+    }
+  }
+}
+```
+
+POST to:
+
+    https://run.googleapis.com/v2/projects/paperclip-492823/locations/us-central1/jobs?jobId=paperclip-diagnostic
+
+Then `gcloud run jobs execute paperclip-diagnostic --region=us-central1
+--project=paperclip-492823 --wait`, read logs via `gcloud logging read
+'resource.type="cloud_run_job" AND
+resource.labels.job_name="paperclip-diagnostic"'`, then DELETE the job
+via REST API. Total turnaround: ~2 minutes.
