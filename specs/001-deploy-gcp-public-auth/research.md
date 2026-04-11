@@ -222,13 +222,26 @@ The bucket name is explicitly distinct from the existing
 **Decision**: All sensitive values live in GCP Secret Manager in
 `paperclip-492823`. The Paperclip Cloud Run service mounts each secret
 as an environment variable at deploy time via the service spec's
-`env.value_source.secret_key_ref` field. Secrets are:
-`paperclip-master-key`, `paperclip-database-url`,
-`paperclip-s3-access-key-id`, `paperclip-s3-secret-access-key`. **There
-is no `paperclip-anthropic-api-key` and no `paperclip-openai-api-key`** —
-Vertex Claude eliminates the Anthropic key and OpenAI/Codex agents are
-out of scope. Strict secret mode (`PAPERCLIP_SECRETS_STRICT_MODE=true`)
-is set in the service env.
+`env.value_source.secret_key_ref` field. Five secrets:
+`paperclip-master-key`, `paperclip-better-auth-secret`,
+`paperclip-database-url`, `paperclip-s3-access-key-id`,
+`paperclip-s3-secret-access-key`. **There is no `paperclip-anthropic-api-key`
+and no `paperclip-openai-api-key`** — Vertex Claude eliminates the
+Anthropic key and OpenAI/Codex agents are out of scope. Strict secret
+mode (`PAPERCLIP_SECRETS_STRICT_MODE=true`) is set in the service env.
+
+**Note on env var names**: Cloud Run mounts each secret to the env var
+name Paperclip's source code actually reads, which differs from the
+secret name in some cases. `paperclip-master-key` →
+`PAPERCLIP_SECRETS_MASTER_KEY`. `paperclip-better-auth-secret` →
+`BETTER_AUTH_SECRET`. `paperclip-s3-access-key-id` →
+**`AWS_ACCESS_KEY_ID`** and `paperclip-s3-secret-access-key` →
+**`AWS_SECRET_ACCESS_KEY`** — Paperclip's S3 storage provider creates
+an `S3Client` without explicit credentials, so the AWS SDK reads the
+standard AWS env var names from the environment. The Secret Manager
+secret names are kept descriptive (`paperclip-s3-*`) but the env var
+mounts use the AWS SDK names. See `contracts/container-image.md` for
+the complete env var mapping.
 
 **Verified on 2026-04-10**: a local Paperclip instance running with
 `CLAUDE_CODE_USE_VERTEX=1` and no `ANTHROPIC_API_KEY` successfully
@@ -244,9 +257,14 @@ The master key is generated once by `scripts/bootstrap-master-key.sh`
 (`openssl rand -base64 32` →
 `gcloud secrets create paperclip-master-key --data-file=-`) and is
 **never** written to disk in the build context, the image, or the
-runtime container filesystem. The GCS HMAC credential is generated
-once by `scripts/bootstrap-gcs-hmac.sh` and stored as two Secret
-Manager secrets (access ID + secret).
+runtime container filesystem. The Better Auth signing secret is
+generated the same way by `scripts/bootstrap-better-auth-secret.sh`
+(sibling script, identical pattern, separate Secret Manager entry).
+The GCS HMAC credential is generated once by
+`scripts/bootstrap-gcs-hmac.sh` and stored as two Secret Manager
+secrets (access ID + secret). All three bootstrap scripts are
+idempotent in the safe direction — they refuse to overwrite existing
+secrets.
 
 **Rationale**:
 - Native Cloud Run integration: no sidecar, no init container, no CSI

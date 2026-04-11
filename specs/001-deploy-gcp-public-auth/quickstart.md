@@ -251,10 +251,19 @@ transitioning from `local_trusted` to `authenticated` mode. In a clean
 public-mode deployment, the bootstrap path runs as a Cloud Run Job:
 
 ```bash
-gcloud run jobs execute paperclipai-bootstrap-admin \
+gcloud run jobs execute paperclipai-bootstrap-ceo \
   --region=us-central1 \
-  --update-env-vars=BOOTSTRAP_OPERATOR_IDENTIFIER="$YOUR_IDENTIFIER" \
+  --project=paperclip-492823 \
   --wait
+```
+
+The job's CMD override is `["pnpm", "paperclipai", "auth", "bootstrap-ceo", "--base-url", "https://<deployment-domain>"]`. After the job completes, fetch the execution log to capture the one-time invite URL:
+
+```bash
+gcloud run jobs executions list --job=paperclipai-bootstrap-ceo \
+  --region=us-central1 --project=paperclip-492823 --limit=1
+gcloud run jobs executions describe <execution-name> \
+  --region=us-central1 --project=paperclip-492823
 ```
 
 The job (defined in `infra/modules/jobs/`) creates the seed operator
@@ -262,7 +271,8 @@ and prints a one-time claim URL. **Store the URL in your password
 manager** — it expires within 10 minutes.
 
 > If `paperclipai` does not yet ship a documented non-interactive
-> bootstrap-admin command, the workaround is to run the same job in
+> bootstrap-ceo command (which is the actual upstream CLI name —
+> verified at cli/src/index.ts:152-160), the workaround is to run the same job in
 > interactive mode via `gcloud run jobs execute --interactive`
 > (followup: wrap this in a script once Paperclip's command is
 > stable).

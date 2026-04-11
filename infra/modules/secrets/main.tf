@@ -23,6 +23,11 @@ data "google_secret_manager_secret" "master_key" {
   project   = var.project_id
 }
 
+data "google_secret_manager_secret" "better_auth_secret" {
+  secret_id = "paperclip-better-auth-secret"
+  project   = var.project_id
+}
+
 data "google_secret_manager_secret" "s3_access_key_id" {
   secret_id = "paperclip-s3-access-key-id"
   project   = var.project_id
@@ -37,6 +42,7 @@ data "google_secret_manager_secret" "s3_secret_access_key" {
 locals {
   secret_ids_for_iam = var.runtime_service_account_email == null ? [] : [
     data.google_secret_manager_secret.master_key.id,
+    data.google_secret_manager_secret.better_auth_secret.id,
     data.google_secret_manager_secret.s3_access_key_id.id,
     data.google_secret_manager_secret.s3_secret_access_key.id,
   ]

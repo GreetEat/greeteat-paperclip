@@ -76,6 +76,31 @@
   `quickstart.md` per the user's CI-only-deployment direction. Vertex
   Claude Model Garden access on `paperclip-492823` is enabled
   separately by the operator (per-project subscription).
+- **Sixth draft (post-Phase-2 source-code audit)**: while implementing
+  Phase 2 of `/speckit-implement`, an audit of the cloned Paperclip
+  source surfaced multiple env-var and Dockerfile assumptions in the
+  earlier drafts that were factually wrong. Specifically:
+  Paperclip uses TWO env vars (`PAPERCLIP_DEPLOYMENT_MODE=authenticated`
+  + `PAPERCLIP_DEPLOYMENT_EXPOSURE=public`) not one;
+  storage credentials are read by the AWS SDK from `AWS_ACCESS_KEY_ID`
+  / `AWS_SECRET_ACCESS_KEY` not `S3_*`; storage backend env vars are
+  `PAPERCLIP_STORAGE_S3_*` not `S3_*`; `BETTER_AUTH_SECRET` is REQUIRED
+  for any authenticated deployment (we had no secret for it);
+  `PAPERCLIP_AUTH_DISABLE_SIGN_UP=true` is the invitation-only
+  enforcement mechanism; the default port is 3100 not 8080; and the
+  `paperclipai auth bootstrap-ceo` command exists for non-interactive
+  first-admin invite creation. The audit also revealed that Paperclip
+  ships its own non-trivial multi-workspace Dockerfile, so the custom
+  Dockerfile + entrypoint we wrote in Phase 2 (T019, T020) were
+  unnecessary and potentially wrong — they were deleted and the build
+  workflow was rewritten to clone upstream and build from upstream's
+  official Dockerfile. A new bootstrap script
+  `bootstrap-better-auth-secret.sh` was added (sibling of
+  `bootstrap-master-key.sh`), the secrets module was extended with a
+  fourth data lookup, and the contracts/container-image.md spec was
+  rewritten end-to-end with the correct env var names and the
+  upstream-Dockerfile inheritance approach. Phase 2 commits remain
+  in history; the corrections land in a `fix(infra)` commit on top.
 
 ### Open coverage
 

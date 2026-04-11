@@ -79,12 +79,14 @@ GCP Project: paperclip-492823 (existing, shared)
 │           └── HMAC key: stored in Secret Manager (interop credentials)
 │
 ├── Secret Manager secrets (each with label service=paperclip)
-│   ├── paperclip-master-key
-│   ├── paperclip-database-url
-│   ├── paperclip-s3-access-key-id
-│   └── paperclip-s3-secret-access-key
+│   ├── paperclip-master-key            (32 bytes; bootstrap-master-key.sh)
+│   ├── paperclip-better-auth-secret    (32 bytes; bootstrap-better-auth-secret.sh)
+│   ├── paperclip-database-url          (created by database module in Phase 3)
+│   ├── paperclip-s3-access-key-id      (HMAC interop; bootstrap-gcs-hmac.sh)
+│   └── paperclip-s3-secret-access-key  (HMAC interop; bootstrap-gcs-hmac.sh)
 │   (no paperclip-anthropic-api-key — Vertex Claude uses
 │    paperclip-runtime-sa's roles/aiplatform.user; verified 2026-04-10)
+│   (no paperclip-openai-api-key — OpenAI/Codex agents are out of scope)
 │
 ├── Artifact Registry
 │   └── Repository: paperclip (Docker format, us-central1)
@@ -115,24 +117,44 @@ GCP Project: paperclip-492823 (existing, shared)
 │   │   ├── VPC connector: paperclip-connector
 │   │   ├── Service account: paperclip-runtime-sa
 │   │   ├── Labels: service=paperclip
-│   │   ├── Env (plain):
-│   │   │     PORT (injected), HOST=0.0.0.0, PAPERCLIP_DEPLOYMENT_MODE=public,
+│   │   ├── Container port: 3100 (Paperclip's default; matches upstream Dockerfile EXPOSE)
+│   │   ├── Env (plain — verified against upstream config.ts):
+│   │   │     PORT=3100 (Cloud Run injects), HOST=0.0.0.0, SERVE_UI=true,
+│   │   │     PAPERCLIP_HOME=/paperclip, PAPERCLIP_INSTANCE_ID=prod,
+│   │   │     PAPERCLIP_DEPLOYMENT_MODE=authenticated,
+│   │   │     PAPERCLIP_DEPLOYMENT_EXPOSURE=public,
 │   │   │     PAPERCLIP_PUBLIC_URL=https://<your-domain>,
+│   │   │     PAPERCLIP_AUTH_DISABLE_SIGN_UP=true,
 │   │   │     PAPERCLIP_SECRETS_STRICT_MODE=true,
-│   │   │     PAPERCLIP_INSTANCE_ID=prod,
-│   │   │     S3_ENDPOINT=https://storage.googleapis.com,
-│   │   │     S3_BUCKET=paperclip-492823-uploads,
-│   │   │     S3_REGION=auto, LOG_LEVEL=info, LOG_FORMAT=json,
-│   │   │     CLAUDE_CODE_USE_VERTEX=1,
-│   │   │     CLOUD_ML_REGION=global,
+│   │   │     PAPERCLIP_STORAGE_PROVIDER=s3,
+│   │   │     PAPERCLIP_STORAGE_S3_BUCKET=paperclip-492823-uploads,
+│   │   │     PAPERCLIP_STORAGE_S3_ENDPOINT=https://storage.googleapis.com,
+│   │   │     PAPERCLIP_STORAGE_S3_REGION=us-central1,
+│   │   │     PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE=true,
+│   │   │     CLAUDE_CODE_USE_VERTEX=1, CLOUD_ML_REGION=global,
 │   │   │     ANTHROPIC_VERTEX_PROJECT_ID=paperclip-492823,
 │   │   │     ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6
-│   │   └── Secrets (mounted from Secret Manager): the 4–5 paperclip-* secrets
-│   └── Cloud Run Job: paperclipai-doctor
+│   │   └── Secrets (5, mounted from Secret Manager via env_value_source):
+│   │         PAPERCLIP_SECRETS_MASTER_KEY ← paperclip-master-key
+│   │         BETTER_AUTH_SECRET           ← paperclip-better-auth-secret
+│   │         DATABASE_URL                 ← paperclip-database-url (Phase 3)
+│   │         AWS_ACCESS_KEY_ID            ← paperclip-s3-access-key-id
+│   │         AWS_SECRET_ACCESS_KEY        ← paperclip-s3-secret-access-key
+│   │         (Standard AWS SDK env names because Paperclip's S3 provider
+│   │          doesn't pass explicit credentials — server/src/storage/s3-provider.ts)
+│   ├── Cloud Run Job: paperclipai-doctor
+│   │   ├── Same image as the service
+│   │   ├── Same service account, secrets, env
+│   │   ├── Labels: service=paperclip
+│   │   └── Override command: ["pnpm", "paperclipai", "doctor"]
+│   └── Cloud Run Job: paperclipai-bootstrap-ceo
 │       ├── Same image as the service
 │       ├── Same service account, secrets, env
 │       ├── Labels: service=paperclip
-│       └── Override command: ["paperclipai", "doctor"]
+│       └── Override command: ["pnpm", "paperclipai", "auth", "bootstrap-ceo",
+│                               "--base-url", "https://<deployment-domain>"]
+│       (One-time first-admin invite creation; the invite URL appears in
+│        the job's execution log; operator captures it within the TTL)
 │
 ├── Edge / DNS
 │   ├── Cloud DNS Zone: paperclip-greeteat-zone

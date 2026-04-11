@@ -1,21 +1,31 @@
 name: Build Paperclip image
 
 # =============================================================================
-# Builds the Paperclip container image from a pinned upstream release tag and
-# pushes it to Artifact Registry in the paperclip-492823 GCP project.
+# Builds the Paperclip container image from upstream Paperclip's OFFICIAL
+# Dockerfile (https://github.com/paperclipai/paperclip/blob/master/Dockerfile)
+# at the pinned release tag and pushes it to Artifact Registry in the
+# paperclip-492823 GCP project.
 #
-# Triggered:
-#   - workflow_dispatch (manual): operator chooses the paperclip_version
-#   - PR-time: any change under infra/docker/ or to versions.tfvars
+# Why we don't maintain our own Dockerfile:
+#   Paperclip's upstream Dockerfile is non-trivial — it builds three
+#   workspaces in order (@paperclipai/ui, @paperclipai/plugin-sdk,
+#   @paperclipai/server), installs the Claude Code / Codex / OpenCode CLIs
+#   globally so the spawned-subprocess agents work, and ships an entrypoint
+#   that remaps the node user UID/GID to match the volume mount. Inheriting
+#   their Dockerfile means we get all of that for free, including any future
+#   upstream changes.
 #
-# Authentication:
-#   - Workload Identity Federation via the paperclip-github WIF pool
-#     (project-scoped, created by infra/modules/workload-identity in T018)
-#   - No service account JSON keys
-#
-# Outputs:
-#   - The immutable image digest is posted to the workflow summary so the
-#     operator can paste it into versions.tfvars in a follow-up PR.
+# What this workflow does:
+#   1. Checks out THIS deployment-spec repo (for versions.tfvars)
+#   2. Determines the paperclip_version to build (from workflow input or
+#      versions.tfvars)
+#   3. Clones upstream Paperclip at the exact pinned tag
+#   4. Authenticates to GCP via project-scoped Workload Identity Federation
+#   5. Builds the image using upstream's Dockerfile in the cloned tree
+#   6. Scans with Trivy (HIGH/CRITICAL fail-on-no-fix)
+#   7. Pushes to Artifact Registry with both <version> and <git-sha> tags
+#   8. Outputs the immutable digest in the workflow summary so the operator
+#      can paste it into versions.tfvars
 # =============================================================================
 
 on:
@@ -28,7 +38,6 @@ on:
   pull_request:
     paths:
       - "infra/envs/prod/versions.tfvars"
-      - "infra/docker/**"
       - ".github/workflows/build-image.yml"
 
 env:
@@ -38,6 +47,7 @@ env:
   ARTIFACT_REGISTRY_REPO:   paperclip
   IMAGE_NAME:               paperclip
   WIF_SERVICE_ACCOUNT:      paperclip-github-actions@paperclip-492823.iam.gserviceaccount.com
+  PAPERCLIP_REPO:           https://github.com/paperclipai/paperclip.git
 
 permissions:
   contents:        read
@@ -48,7 +58,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout this deployment-spec repo
         uses: actions/checkout@v4
 
       - name: Determine paperclip_version
@@ -67,12 +77,14 @@ jobs:
           echo "paperclip_version=$ver" >> "$GITHUB_OUTPUT"
           echo "Building Paperclip $ver"
 
-      - name: Lint Dockerfile (Hadolint)
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: infra/docker/Dockerfile
-          config:     infra/docker/.hadolint.yaml
-          failure-threshold: warning
+      - name: Clone upstream Paperclip at pinned tag
+        run: |
+          git clone \
+            --depth 1 \
+            --branch "${{ steps.version.outputs.paperclip_version }}" \
+            "${{ env.PAPERCLIP_REPO }}" \
+            paperclip-source
+          ls -la paperclip-source/Dockerfile
 
       - name: Authenticate to GCP via WIF
         id: auth
@@ -87,14 +99,13 @@ jobs:
       - name: Configure docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
 
-      - name: Build image
+      - name: Build image from upstream Dockerfile
         run: |
           IMAGE_URL="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.IMAGE_NAME }}"
+          cd paperclip-source
           docker build \
-            --build-arg PAPERCLIP_VERSION=${{ steps.version.outputs.paperclip_version }} \
             -t "$IMAGE_URL:${{ steps.version.outputs.paperclip_version }}" \
             -t "$IMAGE_URL:${{ github.sha }}" \
-            -f infra/docker/Dockerfile \
             .
           echo "image_url=$IMAGE_URL" >> "$GITHUB_ENV"
 
@@ -127,9 +138,10 @@ jobs:
       - name: Output digest summary
         run: |
           {
-            echo "## Paperclip image built"
+            echo "## Paperclip image built (from upstream Dockerfile)"
             echo ""
-            echo "- **Version**: \`${{ steps.version.outputs.paperclip_version }}\`"
+            echo "- **Upstream version**: \`${{ steps.version.outputs.paperclip_version }}\`"
+            echo "- **Source**: ${{ env.PAPERCLIP_REPO }} @ ${{ steps.version.outputs.paperclip_version }}"
             echo "- **Digest**: \`${{ steps.digest.outputs.digest }}\`"
             echo "- **Image URL**: \`${{ env.image_url }}@${{ steps.digest.outputs.digest }}\`"
             echo ""

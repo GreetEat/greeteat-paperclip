@@ -247,18 +247,24 @@ infra/
 ├── envs/
 │   └── prod/                         # Single environment for v1
 │       ├── main.tf                   # Composes modules
+│       ├── variables.tf              # Typed + validated input variables
 │       ├── backend.tf                # GCS state backend (paperclip-492823/paperclip-tf-state)
-│       ├── terraform.tfvars          # Region, domain, paperclip_version, image_digest, sizing
+│       ├── terraform.tfvars          # Region, domain, github_repository, sizing
 │       └── versions.tfvars           # paperclip_version + paperclip_image_digest
-├── docker/
-│   ├── Dockerfile                    # Multi-stage build of pinned Paperclip release
-│   └── entrypoint.sh                 # Boot script: env validation → migrations → server
 └── scripts/
-    ├── bootstrap-master-key.sh       # One-time: generate 32-byte key → Secret Manager
-    ├── bootstrap-gcs-hmac.sh         # One-time: create HMAC for GCS interop → Secret Manager
-    ├── deploy.sh                     # plan + apply + run doctor job + smoke test
-    ├── rollback.sh                   # gcloud run services update-traffic --to-revision <prev>
-    └── doctor.sh                     # Wrap gcloud run jobs execute paperclipai-doctor
+    ├── bootstrap-master-key.sh           # One-time: generate 32-byte master key → Secret Manager
+    ├── bootstrap-better-auth-secret.sh   # One-time: generate BETTER_AUTH_SECRET → Secret Manager
+    ├── bootstrap-gcs-hmac.sh             # One-time: create HMAC for GCS interop → Secret Manager
+    ├── deploy.sh                          # plan + apply + run doctor job + smoke test
+    ├── rollback.sh                        # gcloud run services update-traffic --to-revision <prev>
+    └── doctor.sh                          # Wrap gcloud run jobs execute paperclipai-doctor
+
+# NOTE: there is intentionally NO infra/docker/ subtree.
+# We do NOT maintain a custom Dockerfile — the build-image.yml CI workflow
+# clones upstream paperclipai/paperclip at the pinned version and runs
+# `docker build .` against their official Dockerfile. See
+# contracts/container-image.md for the rationale and the source-code audit
+# that drove this decision (post-Phase-2).
 
 .github/
 └── workflows/
