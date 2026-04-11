@@ -118,6 +118,21 @@ resource "google_cloud_run_v2_service" "paperclip" {
 
   ingress = "INGRESS_TRAFFIC_ALL" # public ingress; Better Auth gates everything inside
 
+  # The google provider 6.x defaults this to TRUE for Cloud Run v2 services,
+  # which prevents Terraform from destroying the service even when it needs
+  # to recreate it (e.g. on a failed-then-retried apply, where the resource
+  # is in state but in a broken revision). We rely on Cloud Run revision
+  # rollback (deploy.sh + rollback.sh in Phase 6/7) for safety, not on
+  # delete-protection — Cloud Run keeps prior revisions around and rolling
+  # traffic back is the recovery primitive, not "the service object cannot
+  # be deleted".
+  #
+  # Caught the hard way during the second Phase 3 apply: terraform decided
+  # to replace the service after the first apply died at health-check, and
+  # the destroy step failed with:
+  #   Error: cannot destroy service without setting deletion_protection=false
+  deletion_protection = false
+
   labels = {
     service = "paperclip"
   }
