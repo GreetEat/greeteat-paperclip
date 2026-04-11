@@ -1,0 +1,144 @@
+name: Build Paperclip image
+
+# =============================================================================
+# Builds the Paperclip container image from a pinned upstream release tag and
+# pushes it to Artifact Registry in the paperclip-492823 GCP project.
+#
+# Triggered:
+#   - workflow_dispatch (manual): operator chooses the paperclip_version
+#   - PR-time: any change under infra/docker/ or to versions.tfvars
+#
+# Authentication:
+#   - Workload Identity Federation via the paperclip-github WIF pool
+#     (project-scoped, created by infra/modules/workload-identity in T018)
+#   - No service account JSON keys
+#
+# Outputs:
+#   - The immutable image digest is posted to the workflow summary so the
+#     operator can paste it into versions.tfvars in a follow-up PR.
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      paperclip_version:
+        description: "Upstream Paperclip release tag to build (e.g. v0.42.0)"
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - "infra/envs/prod/versions.tfvars"
+      - "infra/docker/**"
+      - ".github/workflows/build-image.yml"
+
+env:
+  GCP_PROJECT_ID:           paperclip-492823
+  GCP_PROJECT_NUMBER:       "233990667256"
+  GCP_REGION:               us-central1
+  ARTIFACT_REGISTRY_REPO:   paperclip
+  IMAGE_NAME:               paperclip
+  WIF_SERVICE_ACCOUNT:      paperclip-github-actions@paperclip-492823.iam.gserviceaccount.com
+
+permissions:
+  contents:        read
+  id-token:        write    # required for WIF
+  pull-requests:   write    # to post the digest as a PR comment
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine paperclip_version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.paperclip_version }}" ]; then
+            ver="${{ github.event.inputs.paperclip_version }}"
+          else
+            ver=$(grep -E '^paperclip_version' infra/envs/prod/versions.tfvars \
+              | sed -E 's/.*"([^"]+)".*/\1/')
+          fi
+          if [ -z "$ver" ] || [ "$ver" = "TBD" ]; then
+            echo "ERROR: paperclip_version is not set (currently '$ver')" >&2
+            exit 1
+          fi
+          echo "paperclip_version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Building Paperclip $ver"
+
+      - name: Lint Dockerfile (Hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: infra/docker/Dockerfile
+          config:     infra/docker/.hadolint.yaml
+          failure-threshold: warning
+
+      - name: Authenticate to GCP via WIF
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/paperclip-github/providers/github
+          service_account:            ${{ env.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build image
+        run: |
+          IMAGE_URL="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.IMAGE_NAME }}"
+          docker build \
+            --build-arg PAPERCLIP_VERSION=${{ steps.version.outputs.paperclip_version }} \
+            -t "$IMAGE_URL:${{ steps.version.outputs.paperclip_version }}" \
+            -t "$IMAGE_URL:${{ github.sha }}" \
+            -f infra/docker/Dockerfile \
+            .
+          echo "image_url=$IMAGE_URL" >> "$GITHUB_ENV"
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref:    ${{ env.image_url }}:${{ github.sha }}
+          format:       table
+          severity:     HIGH,CRITICAL
+          exit-code:    "1"
+          ignore-unfixed: true
+
+      - name: Push image
+        run: |
+          docker push "${{ env.image_url }}:${{ steps.version.outputs.paperclip_version }}"
+          docker push "${{ env.image_url }}:${{ github.sha }}"
+
+      - name: Get immutable digest
+        id: digest
+        run: |
+          digest=$(docker inspect --format='{{index .RepoDigests 0}}' \
+            "${{ env.image_url }}:${{ github.sha }}" | sed 's/.*@//')
+          if [ -z "$digest" ]; then
+            echo "ERROR: failed to extract digest from docker inspect" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Image digest: $digest"
+
+      - name: Output digest summary
+        run: |
+          {
+            echo "## Paperclip image built"
+            echo ""
+            echo "- **Version**: \`${{ steps.version.outputs.paperclip_version }}\`"
+            echo "- **Digest**: \`${{ steps.digest.outputs.digest }}\`"
+            echo "- **Image URL**: \`${{ env.image_url }}@${{ steps.digest.outputs.digest }}\`"
+            echo ""
+            echo "### Next step"
+            echo ""
+            echo "Update \`infra/envs/prod/versions.tfvars\`:"
+            echo ""
+            echo '```hcl'
+            echo "paperclip_version      = \"${{ steps.version.outputs.paperclip_version }}\""
+            echo "paperclip_image_digest = \"${{ steps.digest.outputs.digest }}\""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

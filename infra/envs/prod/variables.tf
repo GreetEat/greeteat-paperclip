@@ -33,6 +33,16 @@ variable "domain" {
   description = "Public hostname Paperclip is reachable at (e.g. paperclip.greeteat.example). Operator must set the actual value in terraform.tfvars."
 }
 
+variable "github_repository" {
+  type        = string
+  description = "GitHub repository slug allowed to authenticate via WIF (owner/repo format). Used by the workload-identity module's attribute_condition to restrict OIDC token exchange to assertions from this exact repository. Operator must set the actual value in terraform.tfvars."
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
+    error_message = "github_repository must be in 'owner/repo' format (e.g. 'paperclipai/paperclip-greeteat')."
+  }
+}
+
 # -----------------------------------------------------------------------------
 # Cloud SQL sizing (used by module.database in Phase 3)
 # -----------------------------------------------------------------------------

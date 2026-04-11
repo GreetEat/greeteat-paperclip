@@ -60,13 +60,57 @@ provider "google-beta" {
 }
 
 # -----------------------------------------------------------------------------
-# Phase 2 — Foundational modules (added in T022)
+# Phase 2 — Foundational modules (wired in T022)
 # -----------------------------------------------------------------------------
-# module "apis" { ... }
-# module "network" { ... }
-# module "secrets" { ... }
-# module "artifact_registry" { ... }
-# module "workload_identity" { ... }
+
+module "apis" {
+  source     = "../../modules/apis"
+  project_id = var.project_id
+}
+
+module "network" {
+  source     = "../../modules/network"
+  project_id = var.project_id
+  region     = var.region
+
+  depends_on = [module.apis]
+}
+
+module "secrets" {
+  source     = "../../modules/secrets"
+  project_id = var.project_id
+
+  # runtime_service_account_email is null in Phase 2 — the data lookups
+  # validate that bootstrap-master-key.sh and bootstrap-gcs-hmac.sh have
+  # been run, but no IAM bindings are created. Phase 3 (T032) updates this
+  # to pass module.compute.runtime_service_account_email.
+  runtime_service_account_email = null
+
+  depends_on = [module.apis]
+}
+
+module "workload_identity" {
+  source            = "../../modules/workload-identity"
+  project_id        = var.project_id
+  github_repository = var.github_repository
+
+  depends_on = [module.apis]
+}
+
+module "artifact_registry" {
+  source     = "../../modules/artifact-registry"
+  project_id = var.project_id
+  region     = var.region
+
+  github_actions_service_account_email = module.workload_identity.service_account_email
+
+  # runtime_service_account_email is null in Phase 2; Phase 3 (T032) updates
+  # this to pass module.compute.runtime_service_account_email so the runtime
+  # SA can pull images from the repository.
+  runtime_service_account_email = null
+
+  depends_on = [module.apis]
+}
 
 # -----------------------------------------------------------------------------
 # Phase 3 — User Story 1 (added in T032)

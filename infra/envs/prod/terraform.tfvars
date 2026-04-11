@@ -22,6 +22,15 @@ region     = "us-central1"
 domain = "paperclip.greeteat.example"
 
 # -----------------------------------------------------------------------------
+# GitHub repository for WIF
+# -----------------------------------------------------------------------------
+# TODO(operator): set the GitHub repository slug (owner/repo) that owns
+# this deployment-spec repository. The WIF provider's attribute_condition
+# is restricted to assertions from this exact repo, so Actions in any
+# other repo cannot mint tokens against the paperclip-github WIF pool.
+github_repository = "paperclipai/paperclip-greeteat"
+
+# -----------------------------------------------------------------------------
 # Cloud SQL sizing
 # -----------------------------------------------------------------------------
 cloud_sql_tier                  = "db-custom-2-7680" # 2 vCPU, 7.5 GiB
