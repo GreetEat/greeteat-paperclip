@@ -8,9 +8,14 @@ variable "region" {
   description = "GCP region."
 }
 
-variable "domain" {
+variable "public_url" {
   type        = string
-  description = "Public hostname Paperclip is reachable at. Used to set PAPERCLIP_PUBLIC_URL=https://<domain>."
+  description = "Full public URL Paperclip is reachable at, including https:// scheme. Used as PAPERCLIP_PUBLIC_URL. The prod env composer derives this from var.domain (if a custom domain is set) or var.public_url_override (after the first apply, when the *.run.app URL is known) or a placeholder (during the first apply of a no-domain deployment)."
+
+  validation {
+    condition     = can(regex("^https://", var.public_url))
+    error_message = "public_url must start with https://."
+  }
 }
 
 # -----------------------------------------------------------------------------

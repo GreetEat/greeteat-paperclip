@@ -8,9 +8,14 @@ variable "region" {
   description = "GCP region. Must match the Cloud Run service region so the job can use the same VPC connector and reach the same Cloud SQL private IP."
 }
 
-variable "domain" {
+variable "public_url" {
   type        = string
-  description = "Public hostname Paperclip is reachable at. Used to set PAPERCLIP_PUBLIC_URL and to construct the bootstrap-ceo --base-url argument so the printed invite link points at the live deployment."
+  description = "Full public URL Paperclip is reachable at, including https:// scheme. Used as PAPERCLIP_PUBLIC_URL inside the job and as the bootstrap-ceo --base-url argument so the printed invite link points at the live deployment. Composed by the prod env (see compute module's public_url for the same composition)."
+
+  validation {
+    condition     = can(regex("^https://", var.public_url))
+    error_message = "public_url must start with https://."
+  }
 }
 
 variable "paperclip_image_url" {

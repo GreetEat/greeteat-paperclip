@@ -14,12 +14,30 @@ project_id = "paperclip-492823"
 region     = "us-central1"
 
 # -----------------------------------------------------------------------------
-# Public hostname
+# Public URL — TWO-PASS BOOTSTRAP for the no-domain deployment
 # -----------------------------------------------------------------------------
-# TODO(operator): set the actual hostname Paperclip should be reachable at
-# under a domain you control. Cloud DNS zone + Cloud Run domain mapping
-# will be created by module.edge in Phase 3.
-domain = "paperclip.greeteat.example"
+# We don't have a custom domain yet, so the deployment uses Cloud Run's
+# *.run.app URL directly. This requires a two-pass apply:
+#
+#   Pass 1 (this state):
+#     domain              = ""    -> edge module skipped, no DNS / domain mapping
+#     public_url_override = ""    -> compute uses a placeholder PAPERCLIP_PUBLIC_URL
+#     `terraform apply`           -> creates the Cloud Run service; emits service_uri
+#
+#   Pass 2 (after first apply):
+#     terraform output service_uri    -> e.g. https://paperclip-abc123-uc.a.run.app
+#     public_url_override = "<that exact URL>"
+#     `terraform apply`               -> rolls a new revision with the right PUBLIC_URL
+#
+# Without Pass 2, Better Auth's trustedOrigins check rejects sign-ins
+# because PUBLIC_URL won't match the request origin.
+#
+# When you eventually have a domain, set `domain = "paperclip.greeteat.com"`
+# (full hostname, no scheme) and clear `public_url_override`. The edge
+# module will then provision Cloud DNS + the domain mapping and PUBLIC_URL
+# becomes `https://${domain}`.
+domain              = ""
+public_url_override = ""
 
 # -----------------------------------------------------------------------------
 # GitHub repository for WIF

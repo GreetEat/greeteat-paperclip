@@ -60,6 +60,27 @@ provider "google-beta" {
 }
 
 # -----------------------------------------------------------------------------
+# Local values
+# -----------------------------------------------------------------------------
+
+locals {
+  # PAPERCLIP_PUBLIC_URL composition (see variables.tf for the full
+  # two-pass-apply explanation):
+  #   1. public_url_override wins (post-first-apply *.run.app URL or any
+  #      explicit value the operator wants to force)
+  #   2. else if domain is set (custom hostname via the edge module),
+  #      use https://${domain}
+  #   3. else use a placeholder — only valid during the first apply of a
+  #      no-domain deployment, before the operator captures the *.run.app
+  #      URL from `terraform output service_uri` and sets the override
+  paperclip_public_url = (
+    var.public_url_override != "" ? var.public_url_override :
+    var.domain != "" ? "https://${var.domain}" :
+    "https://pending-first-apply.invalid"
+  )
+}
+
+# -----------------------------------------------------------------------------
 # Phase 2 — Foundational modules (wired in T022)
 # -----------------------------------------------------------------------------
 
@@ -141,7 +162,7 @@ module "compute" {
 
   project_id = var.project_id
   region     = var.region
-  domain     = var.domain
+  public_url = local.paperclip_public_url
 
   paperclip_image_url    = "${module.artifact_registry.repository_url}/paperclip"
   paperclip_image_digest = var.paperclip_image_digest
@@ -172,7 +193,11 @@ module "compute" {
   ]
 }
 
+# Edge module is conditional on having a custom domain. When var.domain is
+# empty, the deployment uses Cloud Run's *.run.app URL directly and the
+# edge module is skipped (no Cloud DNS zone, no domain mapping).
 module "edge" {
+  count  = var.domain != "" ? 1 : 0
   source = "../../modules/edge"
 
   project_id             = var.project_id
@@ -200,7 +225,7 @@ module "jobs" {
 
   project_id = var.project_id
   region     = var.region
-  domain     = var.domain
+  public_url = local.paperclip_public_url
 
   paperclip_image_url    = "${module.artifact_registry.repository_url}/paperclip"
   paperclip_image_digest = var.paperclip_image_digest

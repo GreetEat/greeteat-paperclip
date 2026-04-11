@@ -184,7 +184,7 @@ resource "google_cloud_run_v2_service" "paperclip" {
       }
       env {
         name  = "PAPERCLIP_PUBLIC_URL"
-        value = "https://${var.domain}"
+        value = var.public_url
       }
 
       # Invitation-only enforcement (FR-004 / US2)

@@ -53,7 +53,7 @@ resource "google_cloud_run_v2_job" "bootstrap_ceo" {
           "auth",
           "bootstrap-ceo",
           "--base-url",
-          "https://${var.domain}",
+          var.public_url,
         ]
 
         # Same env shape as the Cloud Run service (compute module). The
@@ -80,7 +80,7 @@ resource "google_cloud_run_v2_job" "bootstrap_ceo" {
         }
         env {
           name  = "PAPERCLIP_PUBLIC_URL"
-          value = "https://${var.domain}"
+          value = var.public_url
         }
         env {
           name  = "PAPERCLIP_AUTH_DISABLE_SIGN_UP"

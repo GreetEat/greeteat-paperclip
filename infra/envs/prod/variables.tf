@@ -30,7 +30,19 @@ variable "region" {
 
 variable "domain" {
   type        = string
-  description = "Public hostname Paperclip is reachable at (e.g. paperclip.greeteat.example). Operator must set the actual value in terraform.tfvars."
+  description = "OPTIONAL custom hostname Paperclip should be reachable at (e.g. paperclip.greeteat.example). When set, the edge module creates a Cloud DNS managed zone + Cloud Run domain mapping and the effective PAPERCLIP_PUBLIC_URL is `https://<domain>`. When empty (\"\") the edge module is skipped entirely and PAPERCLIP_PUBLIC_URL is taken from `public_url_override` (after the first apply, set to the Cloud Run *.run.app URL emitted by `terraform output service_uri`)."
+  default     = ""
+}
+
+variable "public_url_override" {
+  type        = string
+  description = "OPTIONAL explicit override for PAPERCLIP_PUBLIC_URL. Used by the no-domain bootstrap flow: after the first apply, the operator captures the Cloud Run *.run.app URL via `terraform output service_uri`, sets this to that exact value (full https:// URL), and re-applies to roll a new revision with the correct PUBLIC_URL. Better Auth's trustedOrigins check rejects sign-ins when PUBLIC_URL doesn't match the request origin, so this is mandatory before the first sign-in attempt on a no-domain deployment."
+  default     = ""
+
+  validation {
+    condition     = var.public_url_override == "" || can(regex("^https://", var.public_url_override))
+    error_message = "public_url_override must be empty or start with https://."
+  }
 }
 
 variable "github_repository" {
