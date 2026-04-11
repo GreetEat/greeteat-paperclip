@@ -84,11 +84,30 @@ resource "google_sql_user" "paperclip" {
   password = random_password.db_password.result
 }
 
-# Connection string for Cloud Run. Postgres SSL is enforced via Cloud SQL's
-# ssl_mode, but the URL itself doesn't need explicit sslmode= because the
-# pg client over private IP negotiates SSL automatically.
+# Connection string for Cloud Run.
+#
+# `?sslmode=require` is REQUIRED on the URL because Cloud SQL is configured
+# with `ssl_mode = ENCRYPTED_ONLY` above, and the postgres.js client (which
+# Paperclip uses, see node_modules/.pnpm/postgres@3.4.8) does NOT auto-
+# negotiate SSL on a private-IP connection — it connects in cleartext by
+# default and Cloud SQL's pg_hba.conf rejects the auth handshake with:
+#
+#   PostgresError: pg_hba.conf rejects connection for host "10.8.0.x",
+#     user "paperclip", database "paperclip", no encryption
+#
+# Caught the hard way during the first Phase 3 apply. The earlier comment
+# claimed pg_client_over_private_ip_negotiates_SSL_automatically — that's
+# true for some pg client libraries (e.g. node-postgres / pg) but NOT for
+# postgres.js. Since we don't control which client Paperclip uses, the
+# only safe thing is to put sslmode in the URL.
+#
+# `require` (encrypt without verifying the cert chain) is sufficient: the
+# connection only ever happens over the VPC private IP, so MITM is not in
+# the threat model. `verify-ca` / `verify-full` would require mounting
+# Cloud SQL's server CA cert into the container, which adds complexity
+# without security benefit on a private network.
 locals {
-  database_url = "postgres://paperclip:${random_password.db_password.result}@${google_sql_database_instance.paperclip_pg.private_ip_address}:5432/paperclip"
+  database_url = "postgres://paperclip:${random_password.db_password.result}@${google_sql_database_instance.paperclip_pg.private_ip_address}:5432/paperclip?sslmode=require"
 }
 
 resource "google_secret_manager_secret" "database_url" {
