@@ -110,7 +110,7 @@ jobs:
           echo "image_url=$IMAGE_URL" >> "$GITHUB_ENV"
 
       - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref:    ${{ env.image_url }}:${{ github.sha }}
           format:       table
