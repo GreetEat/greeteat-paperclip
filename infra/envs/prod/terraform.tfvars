@@ -39,7 +39,7 @@ region     = "us-central1"
 # module will then provision Cloud DNS + the domain mapping and PUBLIC_URL
 # becomes `https://${domain}`.
 domain              = ""
-public_url_override = ""
+public_url_override = "https://paperclip-280667224791.us-central1.run.app"
 
 # -----------------------------------------------------------------------------
 # GitHub repository for WIF
