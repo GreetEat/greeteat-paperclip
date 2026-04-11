@@ -20,12 +20,12 @@
 # bootstrap-ceo's resolveDbUrl() / resolveBaseUrl() check env vars FIRST, so
 # the placeholder strings are never read.
 #
-# Escaping note: Terraform's templatefile() only treats $${ as an escape
-# sequence (producing literal ${), and only when followed by {. Bare $X
-# stays as literal $X — no escaping needed for shell variable references.
-# Bare $$X (the wrong escape) gets passed through as $$X, and the shell
-# then expands $$ to the PID (1 inside a Cloud Run Job container), which
-# breaks every variable reference. Caught the hard way during T034.
+# Escaping rules: this is a Terraform templatefile, so curly-brace dollar
+# sequences are interpolation. Bare shell variable references like CONFIG_PATH
+# pass through unchanged because templatefile only intercepts the brace form.
+# Use the brace-doubled escape for shell parameter expansion (PARAMETER:-default).
+# (Comment intentionally avoids the literal characters that would otherwise
+# trip the templatefile parser even inside a comment.)
 # =============================================================================
 set -e
 

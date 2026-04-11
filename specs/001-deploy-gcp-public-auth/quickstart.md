@@ -248,11 +248,19 @@ the first time). Cloud Run domain mapping status will move from
 
 ## 6. Bootstrap the first board operator
 
-The first operator account cannot exist before the deployment is up;
-it has to be created against the running Paperclip instance. Paperclip's
-documented bootstrap path uses a one-time "claim URL" generated when
-transitioning from `local_trusted` to `authenticated` mode. In a clean
-public-mode deployment, the bootstrap path runs as a Cloud Run Job:
+**This is the trickiest step in the whole deploy.** Paperclip's
+`bootstrap-ceo` invite does NOT create a user account — it promotes
+an *already-signed-in* user to `instance_admin`. So you have a
+chicken-and-egg with `PAPERCLIP_AUTH_DISABLE_SIGN_UP=true`: the
+deployment ships with sign-up disabled (per the GHSA-68qg-g8mg-6pr7
+mitigation), but you need to sign up at least once to create the
+account that will then claim the bootstrap invite.
+
+**The canonical bootstrap dance is five steps and you must do them in
+this exact order.** Skipping the temporary flip back at the end leaves
+your deployment exposed to the GHSA RCE chain.
+
+### Step 1 — Mint the bootstrap invite via Cloud Run Job
 
 ```bash
 gcloud run jobs execute paperclipai-bootstrap-ceo \
@@ -261,28 +269,156 @@ gcloud run jobs execute paperclipai-bootstrap-ceo \
   --wait
 ```
 
-The job's CMD override is `["pnpm", "paperclipai", "auth", "bootstrap-ceo", "--base-url", "https://<deployment-domain>"]`. After the job completes, fetch the execution log to capture the one-time invite URL:
+The job (defined in `infra/modules/jobs/`) runs a wrapper script
+(`bootstrap-ceo-wrapper.sh.tftpl`) that:
+1. Materializes a minimal Paperclip `config.json` at
+   `/paperclip/instances/default/config.json` — required because the
+   `paperclipai auth bootstrap-ceo` CLI bails immediately if this file
+   is absent. The CLI was designed for developer-laptop usage where
+   `~/.paperclip` persists across runs; Cloud Run Jobs start with empty
+   filesystems, so we have to create it inline. The file's database/auth
+   values are placeholders — actual values come from env vars
+2. Execs the CLI: `node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts auth bootstrap-ceo --base-url <PUBLIC_URL>`
+
+After the job completes, capture the one-time invite URL from the
+execution log:
 
 ```bash
-gcloud run jobs executions list --job=paperclipai-bootstrap-ceo \
-  --region=us-central1 --project=paperclip-492823 --limit=1
-gcloud run jobs executions describe <execution-name> \
-  --region=us-central1 --project=paperclip-492823
+EXEC=$(gcloud run jobs executions list \
+  --job=paperclipai-bootstrap-ceo \
+  --region=us-central1 --project=paperclip-492823 \
+  --limit=1 --format='value(metadata.name)')
+
+gcloud logging read "resource.type=cloud_run_job AND \
+  resource.labels.job_name=paperclipai-bootstrap-ceo AND \
+  labels.\"run.googleapis.com/execution_name\"=$EXEC" \
+  --project=paperclip-492823 --limit=20 --freshness=10m \
+  --format='value(textPayload)' | grep "Invite URL"
 ```
 
-The job (defined in `infra/modules/jobs/`) creates the seed operator
-and prints a one-time claim URL. **Store the URL in your password
-manager** — it expires within 10 minutes.
+The URL looks like:
 
-> If `paperclipai` does not yet ship a documented non-interactive
-> bootstrap-ceo command (which is the actual upstream CLI name —
-> verified at cli/src/index.ts:152-160), the workaround is to run the same job in
-> interactive mode via `gcloud run jobs execute --interactive`
-> (followup: wrap this in a script once Paperclip's command is
-> stable).
+    https://paperclip-280667224791.us-central1.run.app/invite/pcp_bootstrap_<48-hex>
 
-Open the URL in a browser. Complete sign-up. You now hold the first
-board-operator account.
+**Store the URL in your password manager.** It expires in 72 hours
+(the default `--expires-hours` for the CLI). If you don't claim it in
+time, run the job again to mint a fresh one (the CLI revokes any
+unclaimed invites on each run).
+
+### Step 2 — TEMPORARILY enable sign-up
+
+The Terraform-managed `PAPERCLIP_AUTH_DISABLE_SIGN_UP=true` blocks the
+sign-up endpoint. Flip it to `false` via `gcloud` for the bootstrap
+window only:
+
+```bash
+gcloud run services update paperclip \
+  --region=us-central1 \
+  --project=paperclip-492823 \
+  --update-env-vars=PAPERCLIP_AUTH_DISABLE_SIGN_UP=false
+```
+
+Cloud Run rolls a new revision in ~30-60 seconds and serves 100% of
+traffic from it. **DO NOT touch `infra/modules/compute/main.tf` for
+this step** — keep the Terraform state's source-of-truth value at
+`true` so step 5 just reverts the gcloud override naturally.
+
+> **Vulnerability window starts now.** During this window, anyone who
+> knows your Cloud Run URL can sign up an account and execute the
+> GHSA-68qg-g8mg-6pr7 RCE chain. The mitigation is that the URL is
+> not yet published anywhere — you're the only one who knows it.
+> Don't paste it into chat/email/social media. Move fast through
+> steps 3-5 and re-lock.
+
+### Step 3 — Create the seed operator account
+
+1. Open the invite URL from step 1 in a private/incognito browser
+   window. **Hard-refresh** (Cmd+Shift+R / Ctrl+Shift+R) if you
+   already had the page open before step 2 — the frontend needs to
+   reload to see the new server state
+2. Click the sign-up link (or the "create account" CTA on the invite
+   landing page). The form posts to `POST /api/auth/sign-up/email`
+   with `{name, email, password}`
+3. Better Auth creates the user and sets a session cookie
+   automatically — you should be signed in immediately
+
+### Step 4 — Accept the bootstrap invite
+
+While still on the invite page (signed in), click **"Accept bootstrap
+invite"**. The frontend POSTs to
+`/api/invites/<token>/accept`, and the server runs:
+
+```ts
+if (invite.inviteType === "bootstrap_ceo") {
+  // ...require authenticated user...
+  if (!await access.isInstanceAdmin(req.actor.userId)) {
+    await access.promoteInstanceAdmin(req.actor.userId);
+  }
+}
+```
+
+A 202 response means you're now `instance_admin` in the database.
+Confirm by reaching the dashboard — if you can configure agents and
+see settings, the promotion succeeded.
+
+### Step 5 — Re-lock sign-up (CRITICAL)
+
+The Terraform-managed value of `PAPERCLIP_AUTH_DISABLE_SIGN_UP` is
+still `true`, so a plain `terraform apply` reverts the gcloud override
+from step 2:
+
+```bash
+cd infra/envs/prod
+terraform apply
+```
+
+Plan should show one in-place change to the Cloud Run service env
+vars (flipping the variable back to `true`). Apply it.
+
+**Verify the lockdown** with a smoke test from a separate terminal:
+
+```bash
+curl -sS -X POST -H "Content-Type: application/json" \
+  -d '{"email":"attacker@evil.com","password":"x","name":"x"}' \
+  https://paperclip-280667224791.us-central1.run.app/api/auth/sign-up/email \
+  -w "\nHTTP %{http_code}\n"
+```
+
+Expected response:
+
+```json
+{"code":"EMAIL_AND_PASSWORD_SIGN_UP_IS_NOT_ENABLED","message":"Email and password sign up is not enabled"}
+HTTP 400
+```
+
+If you see a 200, the lockdown didn't take — check the live env var
+with `curl ... | python3 -c "import json,sys; ..."` and re-run
+`terraform apply` until it's back to `"true"`.
+
+The vulnerability window is now closed. Subsequent operator accounts
+must come through the in-app invite flow (an existing admin generates
+an invite from the settings page; the invitee claims it via a signed
+URL — that flow works regardless of `disableSignUp` because Paperclip
+uses a different code path for in-app invites).
+
+### Why we can't skip the dance
+
+We tried to ship with `disableSignUp=true` from day 0, hoping the
+`bootstrap-ceo` invite was self-contained. It isn't. Specifically:
+
+- **`POST /api/invites/<token>/accept` for `bootstrap_ceo` requires
+  `req.actor.type === "board"`** (i.e. an authenticated session). It
+  promotes the *signed-in user* to admin; it doesn't create a user.
+- **`POST /api/auth/sign-up/email` is gated by Better Auth's
+  `disableSignUp` flag**. With sign-up disabled, you can't get a user
+  to be signed in as.
+- The two endpoints don't share any "bootstrap bypass" code path.
+
+This is consistent with how Paperclip is designed to be installed:
+operators run `paperclipai onboard` → set up local instance → sign up
+the first user → run `bootstrap-ceo` → accept invite → THEN flip
+`disableSignUp` if going public. We have to compress the same dance
+into a Cloud Run Job + 2 gcloud commands.
 
 ---
 
@@ -402,3 +538,166 @@ bucket (FR-020).
 | Daily doctor fails | Drift in deployment-mode config or missing secret | Cloud Run Jobs → execution logs |
 | Claude Code fails with "401" or "PERMISSION_DENIED on aiplatform.endpoints.predict" | `paperclip-runtime-sa` missing `roles/aiplatform.user`, OR Vertex env vars not set on the Cloud Run service | Verify with `gcloud projects get-iam-policy paperclip-492823 --flatten=bindings[].members --filter=bindings.members:paperclip-runtime-sa@*`; verify `CLAUDE_CODE_USE_VERTEX`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID` in the Cloud Run service env |
 | Vertex returns 404 "publisher model not found" | Claude not enabled in Model Garden | https://console.cloud.google.com/vertex-ai/model-garden?project=paperclip-492823 — enable Claude Sonnet 4.6 |
+
+---
+
+## Things that bit us during the first deploy
+
+This section is the operator's "I wish I had known" log from the
+2026-04-11 first deploy. Each entry is a real failure that cost
+debug time, with the symptom you'll see and the fix.
+
+### `terraform apply` errors
+
+**`Error: Request had invalid authentication credentials. Expected
+OAuth 2 access token …` mid-apply**
+
+Your Workspace's reauth policy expired your ADC token while
+Terraform was waiting on a long-running resource (Cloud SQL: ~15-25
+min, Service Networking Connection: ~5 min). This is GCP's RAPT
+("reauth-related access token") expiration and it bites every long
+apply on a Workspace-managed Google account.
+
+**Fix**: don't run `terraform apply` for Phase 3 from your laptop's
+gcloud ADC. Use one of:
+1. **Cloud Shell** (`console.cloud.google.com` → top-right shell icon)
+   — its auth is sticky for the session, no RAPT enforcement
+2. **Service account key file**: `gcloud iam service-accounts keys
+   create paperclip-tf.json --iam-account=paperclip-github-actions@...`
+   then `export GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/paperclip-tf.json`
+   before running terraform. Delete the key file when done
+3. **GitHub Actions** (Phase 6 `deploy.yml`) — same auth path as
+   `build-image.yml`, no RAPT issues
+
+If you do hit the failure mid-apply, the recovery is:
+1. `gcloud auth application-default login` to refresh
+2. `terraform force-unlock <id>` to clear the stale GCS state lock
+3. `terraform state push errored.tfstate` to sync state with reality
+4. `terraform apply` to resume from where it died
+
+**`Error: cannot destroy service without setting
+deletion_protection=false`**
+
+Google provider 6.x defaults
+`google_cloud_run_v2_service.deletion_protection` to `true`. This is
+a client-side check by the provider — not an API enforcement — so
+the **fix is in `infra/modules/compute/main.tf` (already set to
+`false`)**, but if Terraform is mid-recovery from a failed apply
+where the resource is in state with `true`, the destroy step still
+fails. Recovery:
+
+1. Delete the service via REST API directly (the GCP API has no
+   such enforcement):
+   ```bash
+   curl -X DELETE -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+     "https://run.googleapis.com/v2/projects/paperclip-492823/locations/us-central1/services/paperclip"
+   ```
+2. Remove from state: `terraform state rm
+   module.compute.google_cloud_run_v2_service.paperclip`
+3. Re-run `terraform apply` — Terraform creates fresh
+
+### Cloud Run service won't start
+
+**`PostgresError: pg_hba.conf rejects connection for host
+"10.8.0.x", user "paperclip", database "paperclip", no encryption`**
+
+The `postgres.js` npm client (which Paperclip uses) does NOT
+auto-negotiate TLS on private-IP connections; Cloud SQL with
+`ssl_mode = "ENCRYPTED_ONLY"` rejects the auth handshake.
+
+**Fix**: the `database` module's connection string includes
+`?sslmode=require`. Already correct in
+`infra/modules/database/main.tf`; if you're seeing this error, you're
+on a stale revision — `terraform apply` to roll a new one.
+
+**`The user-provided container failed to start and listen on the
+port defined provided by the PORT=3100 environment variable`**
+
+Cloud Run gave up waiting for the container to bind port 3100.
+Causes seen so far:
+- DATABASE_URL connection failure (see above)
+- Missing required env var (BETTER_AUTH_SECRET, MASTER_KEY)
+- Vertex env var typos
+- The image's CMD was overridden incorrectly (especially in
+  Cloud Run Jobs)
+
+**Where to look**: Cloud Run service → revisions → click the failing
+revision → Logs tab. Or:
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="paperclip"' \
+  --project=paperclip-492823 --limit=100 --freshness=10m \
+  --format='value(timestamp,textPayload,jsonPayload.message)'
+```
+
+### Bootstrap-ceo Cloud Run Job failures
+
+**`Application failed to start: The container may have exited
+abnormally`** or **`Application exec likely failed`**
+
+The job's `command` was overriding the upstream Docker ENTRYPOINT
+(`docker-entrypoint.sh`) with a non-existent binary.
+
+**Fix**: in `infra/modules/jobs/main.tf`, leave `command` UNSET so
+the entrypoint stays as `docker-entrypoint.sh` (which does
+`exec gosu node "$@"`). Put your actual command in `args` instead.
+
+**`No config found at /paperclip/instances/default/config.json. Run
+paperclip onboard first.`**
+
+The `paperclipai auth bootstrap-ceo` CLI requires a config file
+that doesn't exist in a Cloud Run Job's empty filesystem.
+
+**Fix**: the wrapper script
+`infra/modules/jobs/bootstrap-ceo-wrapper.sh.tftpl` materializes a
+minimal `config.json` before exec'ing the CLI. If you're seeing this
+error, the wrapper isn't running — re-apply Terraform and re-execute
+the job.
+
+### Sign-up returns 400 / 401 / can't accept invite
+
+**`{"code":"EMAIL_AND_PASSWORD_SIGN_UP_IS_NOT_ENABLED","message":"Email
+and password sign up is not enabled"}`**
+
+`PAPERCLIP_AUTH_DISABLE_SIGN_UP=true` is correct for steady state but
+blocks the first user creation. **You're missing the bootstrap dance
+(section 6 above).** Flip `disableSignUp=false` via gcloud, sign up,
+accept invite, then re-flip via `terraform apply`.
+
+**Sign-in returns 401 immediately after sign-up**
+
+Better Auth couldn't find the user. Either:
+- Your sign-up never persisted (check Cloud Run logs for
+  `POST /api/auth/sign-up/email` — looking for 200, not 400)
+- You're hitting an old revision via cached state — hard-refresh
+  the browser (Cmd+Shift+R)
+
+### Image build / Trivy failures
+
+**`Unable to resolve action aquasecurity/trivy-action@<version>`**
+
+The pinned version doesn't exist on the action's repo. Check
+`https://github.com/aquasecurity/trivy-action/releases` for the
+current latest stable and update `.github/workflows/build-image.yml`.
+
+**`sha256sum: WARNING: 1 computed checksum did NOT match` in the
+Docker build**
+
+GitHub rotated the `cli.github.com` archive keyring SHA, and
+upstream Paperclip's Dockerfile pins the old one. The
+`build-image.yml` workflow has a "Patch upstream Dockerfile" step
+that fetches the current SHA fresh and seds it into the cloned
+Dockerfile — if it stops working, check that step.
+
+**Trivy fails on dozens of HIGH/CRITICAL CVEs in upstream-bundled
+tooling**
+
+Some of these are real (the Paperclip RCE GHSA) and some are noise
+(golang stdlib in compiled binaries that Paperclip never invokes
+at runtime). Per-CVE reachability analysis lives in `.trivyignore`
+at the repo root. If a *new* CVE shows up that's not in the
+allowlist, triage it (is it reachable in Paperclip's runtime path?)
+and either fix upstream or add to the allowlist with documented
+justification. Re-review the allowlist on every Paperclip version
+bump.
