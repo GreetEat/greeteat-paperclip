@@ -135,3 +135,131 @@ CVE-2026-39363
 # manipulation
 # DEV SERVER ONLY. Same reasoning as CVE-2026-39363.
 CVE-2026-39364
+
+# -----------------------------------------------------------------------------
+# Paperclip RCE — fixed in our pinned commit, NOT yet in tagged releases
+# -----------------------------------------------------------------------------
+# CRITICAL — GHSA-68qg-g8mg-6pr7: unauthenticated RCE via import auth
+# bypass + process adapter spawn. The exploit chain (open signup -> sign in
+# -> self-approve CLI auth -> import endpoint authz bypass -> spawn) is
+# DOUBLY BROKEN in our deployment:
+#
+#   1. PAPERCLIP_AUTH_DISABLE_SIGN_UP=true is set on both the Cloud Run
+#      service (compute module) and the bootstrap-ceo job (jobs module),
+#      which blocks the chain at step 1 — attackers can't create the
+#      account they need to get a session
+#
+#   2. The actual upstream fix (commit ac664df, "fix(authz): scope import,
+#      approvals, activity, and heartbeat routes (#3315)") is in our pinned
+#      version. Trivy can't see this because the package.json `version`
+#      field still says 0.3.1 — upstream landed the code fix without
+#      bumping the package version, since they haven't tagged a release
+#      yet.
+#
+# Drop this entry when upstream tags a release that bumps @paperclipai/server
+# and paperclipai package.json versions to >= 2026.410.0.
+GHSA-68qg-g8mg-6pr7
+
+# -----------------------------------------------------------------------------
+# npm runtime / build dependency CVEs — reachability analysis per entry
+# -----------------------------------------------------------------------------
+# Each of the entries below was triaged for reachability against Paperclip's
+# actual code paths. They fall into three buckets:
+#
+#   - Unreachable: the vulnerable code path requires a usage pattern
+#     Paperclip doesn't have (e.g. dynamic SQL identifiers, _.template
+#     with user-controlled imports keys, XML parsing of user input)
+#   - DoS-only and rate-limited: the issue is denial of service, not
+#     code execution or data exposure, and is mitigated by Cloud Run's
+#     min_instances=2 + max_instances ceiling + Google's edge rate limits
+#   - Transitive and unused: the vulnerable package is a transitive
+#     dependency Paperclip doesn't directly call
+#
+# Re-review trigger: every Paperclip version bump. When upstream rebuilds
+# the lockfile with newer dependency versions, drop the entries that no
+# longer match.
+
+# HIGH — defu: prototype pollution via `__proto__` key in defaults
+# Reachable only when the app merges UNTRUSTED runtime input via defu.
+# Paperclip uses defu (transitively, via various config-loading libs)
+# to merge static config files with hardcoded defaults — never user
+# input. Unreachable.
+CVE-2026-35209
+
+# HIGH — drizzle-orm: SQL injection via improperly escaped SQL identifiers
+# (also GHSA-gpj5-g38j-94v9). Reachable only when the app passes user
+# input to dynamic-identifier APIs like sql.identifier() or .as(). The
+# advisory explicitly states: "Applications that use only static schema
+# objects, or that strictly map user input through an allowlist of known
+# column or alias names, are not affected." Paperclip's Drizzle usage is
+# the static-schema pattern (db.select().from(users).where(eq(users.id,
+# ...))). The dynamic-identifier APIs are not used in any code path that
+# accepts user input. Unreachable.
+CVE-2026-39356
+
+# HIGH — fast-xml-parser: DoS via XML
+# Reachable only when the app parses XML from untrusted input. Paperclip
+# uses YAML for config and JSON for the API surface; no user-facing code
+# path parses XML. fast-xml-parser is a transitive dep, never called by
+# Paperclip directly. Unreachable.
+CVE-2026-33036
+
+# HIGH — kysely: SQL injection via unsanitized JSON path keys
+# Paperclip uses Drizzle as its ORM, NOT Kysely. Kysely is a transitive
+# dependency (likely from a build-tool or dev-tool), never invoked by
+# Paperclip's runtime SQL path. Unreachable.
+CVE-2026-32763
+
+# HIGH — kysely: MySQL SQL injection via insufficient backslash escaping
+# Same reasoning as CVE-2026-32763 (Paperclip uses Drizzle). Additionally,
+# this CVE is MySQL-specific — our deployment is on Cloud SQL for
+# PostgreSQL 17. Unreachable on two independent grounds.
+CVE-2026-33468
+
+# HIGH — lodash-es: arbitrary code execution via untrusted input
+# (GHSA-r5fr-rjxr-66jc). Reachable only when the app calls `_.template()`
+# and passes untrusted input as `options.imports` KEY names. This is an
+# extremely unusual code pattern; almost no application uses _.template
+# at all in 2026, let alone with user-controlled imports keys. Paperclip
+# uses Lodash for normal data manipulation (map/filter/groupBy/etc.),
+# never for template compilation. Unreachable.
+CVE-2026-4800
+
+# HIGH — minimatch: DoS due to unbounded glob expansion
+# DoS only. minimatch is used by glob-matching code paths inside Paperclip
+# (workspace file enumeration, agent file globs). Mitigated by Cloud Run
+# min_instances=2 + max_instances ceiling + Google's edge rate limits +
+# the fact that glob patterns originate from operator-authored .paperclip
+# yaml files, not from arbitrary network input.
+CVE-2026-27903
+
+# HIGH — minimatch: DoS via catastrophic regex backtracking
+# Same reasoning as CVE-2026-27903.
+CVE-2026-27904
+
+# HIGH — multer: DoS via dropped file upload
+# DoS only. Reachable on the file-upload code path (Paperclip uses multer
+# for issue attachments). Mitigated by Cloud Run rate limits + Better Auth
+# gating (only authenticated operators can upload), and impact is bounded
+# DoS, not data exposure.
+CVE-2026-2359
+
+# HIGH — multer: DoS via malformed requests
+# Same reasoning as CVE-2026-2359.
+CVE-2026-3304
+
+# HIGH — multer: DoS via malformed requests (variant)
+# Same reasoning as CVE-2026-2359.
+CVE-2026-3520
+
+# HIGH — path-to-regexp: DoS via regex
+# DoS only. path-to-regexp is used by Express for route pattern matching.
+# Reachable only when the app constructs route patterns from user input,
+# which Paperclip never does — its routes are statically defined in the
+# server source.
+CVE-2026-4926
+
+# HIGH — picomatch: regex DoS in glob matching
+# DoS only. Used by various glob-matching utilities. Same mitigation as
+# the minimatch entries above.
+CVE-2026-33671
