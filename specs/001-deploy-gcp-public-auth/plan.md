@@ -12,7 +12,7 @@ Terraform workflow planned).
 
 Deploy a single GreetEat instance of Paperclip's open-source control plane
 inside the **existing `paperclip-492823` GCP project** (project number
-`233990667256`, parented to the `greeteat.com` organization). The project
+`280667224791`, parented to the `greeteat.com` organization). The project
 already has billing attached (`01BCB7-61A725-D6A2B5`) and Victor holds
 `roles/owner`, so the deployment can proceed without further org-level
 escalation.
@@ -53,7 +53,7 @@ justified in the Complexity Tracking section below.
 ## Technical Context
 
 **Hosting project**: `paperclip-492823` (dedicated, display name
-`paperclip`). Project number `233990667256`. Parent: `greeteat.com`
+`paperclip`). Project number `280667224791`. Parent: `greeteat.com`
 org `768469506142`. Billing: `01BCB7-61A725-D6A2B5` (attached
 2026-04-10). **No co-tenant workloads**. Paperclip resources are
 prefixed `paperclip-*` / `paperclipai-*` and labeled

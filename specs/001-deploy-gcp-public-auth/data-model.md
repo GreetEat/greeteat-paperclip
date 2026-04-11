@@ -20,7 +20,7 @@ This document models two layers:
 
 Single environment. Single dedicated project. No co-tenant workloads.
 **The only resource Paperclip explicitly avoids is the project's
-default Compute service account** (`233990667256-compute@developer.gserviceaccount.com`),
+default Compute service account** (`280667224791-compute@developer.gserviceaccount.com`),
 which exists in every GCP project with broad legacy privileges and
 should never be attached to a Paperclip workload — Paperclip uses its
 own narrowly-scoped `paperclip-runtime-sa` instead.
@@ -221,7 +221,7 @@ GCP Project: paperclip-492823 (existing, shared)
 - `gcs_public_access_prevention` MUST be `enforced`. Variable has no
   override.
 - `cloud_run_service_account` MUST NOT be the project's default Compute
-  service account (`233990667256-compute@…`). Variable rejects it.
+  service account (`280667224791-compute@…`). Variable rejects it.
 - `paperclip_deployment_mode` MUST equal `public`. The compute module
   hardcodes this; it cannot be set to `local_trusted` or `private` from
   tfvars.

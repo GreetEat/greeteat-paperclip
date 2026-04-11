@@ -454,7 +454,7 @@ Each is reversible by amending this spec.
   shared-project decision.
 - **Hosting project**: The deployment lives in a dedicated GCP project
   `paperclip-492823` (display name `paperclip`, project number
-  `233990667256`), parented to the `greeteat.com` organization. The
+  `280667224791`), parented to the `greeteat.com` organization. The
   project ID was auto-suffixed at creation because the friendly ID
   was taken globally. Billing (`01BCB7-61A725-D6A2B5`) was attached
   on 2026-04-10. **No other GreetEat workloads share the project.**

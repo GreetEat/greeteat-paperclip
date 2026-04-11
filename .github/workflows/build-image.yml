@@ -42,7 +42,7 @@ on:
 
 env:
   GCP_PROJECT_ID:           paperclip-492823
-  GCP_PROJECT_NUMBER:       "233990667256"
+  GCP_PROJECT_NUMBER:       "280667224791"
   GCP_REGION:               us-central1
   ARTIFACT_REGISTRY_REPO:   paperclip
   IMAGE_NAME:               paperclip

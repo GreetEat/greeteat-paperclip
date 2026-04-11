@@ -183,7 +183,7 @@ bucket only, and the access ID + secret are stored in Secret Manager.
 The bucket name is explicitly distinct from the existing
 `paperclip-492823.appspot.com`, `staging.paperclip-492823.appspot.com`,
 `us.artifacts.paperclip-492823.appspot.com`, and
-`gcf-sources-233990667256-us-central1` buckets that already live in
+`gcf-sources-280667224791-us-central1` buckets that already live in
 `paperclip-492823` (no collision possible).
 
 **Rationale**:
@@ -531,7 +531,7 @@ Phase 2 tasks.
 
 **Decision**: Paperclip is deployed inside the **dedicated**
 `paperclip-492823` GCP project (display name `paperclip`, project
-number `233990667256`, parented directly to `greeteat.com` org
+number `280667224791`, parented directly to `greeteat.com` org
 `768469506142`). It is the **only** environment for Paperclip — there
 is no separate staging instance — and it is the **only workload** in
 the project (no Firebase, App Engine, Cloud Functions, or other
