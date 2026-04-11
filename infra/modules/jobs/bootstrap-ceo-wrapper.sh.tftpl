@@ -20,17 +20,20 @@
 # bootstrap-ceo's resolveDbUrl() / resolveBaseUrl() check env vars FIRST, so
 # the placeholder strings are never read.
 #
-# templatefile() substitutes $${public_url} before this script reaches the
-# container, so the JSON heredoc below is single-quoted (<<'JSON') to prevent
-# the shell from trying to expand $$meta (a JSON key, not a shell variable).
+# Escaping note: Terraform's templatefile() only treats $${ as an escape
+# sequence (producing literal ${), and only when followed by {. Bare $X
+# stays as literal $X — no escaping needed for shell variable references.
+# Bare $$X (the wrong escape) gets passed through as $$X, and the shell
+# then expands $$ to the PID (1 inside a Cloud Run Job container), which
+# breaks every variable reference. Caught the hard way during T034.
 # =============================================================================
 set -e
 
 CONFIG_PATH="$${PAPERCLIP_CONFIG:-/paperclip/instances/default/config.json}"
-echo "Materializing minimal config at $$CONFIG_PATH"
-mkdir -p "$$(dirname "$$CONFIG_PATH")"
+echo "Materializing minimal config at $CONFIG_PATH"
+mkdir -p "$(dirname "$CONFIG_PATH")"
 
-cat > "$$CONFIG_PATH" <<'JSON'
+cat > "$CONFIG_PATH" <<'JSON'
 {
   "$meta": {
     "version": 1,
