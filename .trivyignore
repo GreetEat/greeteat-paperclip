@@ -1,0 +1,61 @@
+# =============================================================================
+# Trivy ignore list for the Paperclip GreetEat deployment image
+# =============================================================================
+# Each entry below is a vulnerability we have explicitly reviewed and decided
+# to accept for the current image build. The acceptance is conditional —
+# every entry MUST have a justification line and SHOULD have a re-review
+# date or a "drop when upstream fixes X" exit condition.
+#
+# This file is consumed automatically by aquasecurity/trivy-action when it
+# scans the built image (build-image.yml).
+#
+# Re-review cadence: every Paperclip version bump. When a new upstream tag
+# is pinned, run the build with these entries removed and see if any of
+# them are no longer reachable (because upstream rebuilt the tooling layer
+# with newer Go binaries). Drop the ones that have been fixed.
+#
+# Adding a new entry: include the CVE ID, severity, the bundled binary or
+# OS package it lives in, and a one-line justification.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# golang stdlib CVEs in bundled developer tooling
+# (Claude Code, Codex, OpenCode, esbuild — all installed by upstream's
+# Dockerfile and shipped as compiled binaries)
+# -----------------------------------------------------------------------------
+# These six CVEs all live in the golang stdlib that was statically linked
+# into the bundled CLI binaries when upstream built them. Paperclip itself
+# is Node.js — it never invokes these Go runtimes for TLS, archive parsing,
+# URL handling, etc. The agent CLIs are spawned subprocesses that talk to
+# their own model providers; their attack surface is the *prompts* we feed
+# them, not network protocols.
+#
+# Drop these entries once upstream paperclipai/paperclip rebuilds the image
+# tooling layer against Go ≥ 1.25.7 (which fixes the CRITICAL CVE-2025-68121).
+
+# CRITICAL — crypto/tls: incorrect cert validation on TLS session resumption
+# Reachable only via outbound TLS from the bundled Go binaries; the agent
+# CLIs make outbound TLS calls to their model providers, but those endpoints
+# are pinned trusted hostnames, not arbitrary user input.
+CVE-2025-68121
+
+# HIGH — archive/tar: unbounded allocation parsing GNU sparse map
+# Bundled binaries don't ingest user-controlled tar archives.
+CVE-2025-58183
+
+# HIGH — net/url: memory exhaustion in query parameter parsing
+# Bundled binaries don't parse URL query strings from untrusted input.
+CVE-2025-61726
+
+# HIGH — archive/zip: excessive CPU when building archive index
+# Bundled binaries don't build zip archives from user-controlled input.
+CVE-2025-61728
+
+# HIGH — crypto/x509: DoS via crafted certificates
+# Bundled binaries verify certs from pinned trusted endpoints, not
+# untrusted CAs.
+CVE-2025-61729
+
+# HIGH — net/url: incorrect IPv6 host literal parsing
+# Bundled binaries don't construct URLs from user-controlled IPv6 input.
+CVE-2026-25679
