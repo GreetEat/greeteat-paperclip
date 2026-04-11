@@ -17,7 +17,7 @@
 # the digest only, never a mutable tag. (See research.md Decision 12.)
 
 # Paperclip release tag (operator decision; see https://github.com/paperclipai/paperclip/releases)
-paperclip_version = "TBD"
+paperclip_version = "v2026.403.0"
 
 # Immutable Artifact Registry digest produced by build-image.yml for the tag above
 paperclip_image_digest = "TBD"
