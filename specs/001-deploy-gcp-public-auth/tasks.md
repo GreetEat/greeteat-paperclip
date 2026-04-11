@@ -5,6 +5,8 @@ description: "Task list for Deploy Paperclip to GCP in Public Authentication Mod
 
 # Tasks: Deploy Paperclip to GCP in Public Authentication Mode
 
+> **🎉 MVP COMPLETE — 2026-04-11.** The install is up and verified. A public Paperclip deployment is reachable at `https://paperclip-280667224791.us-central1.run.app`, the seed CEO operator account is bootstrapped and signed in, and the CEO agent has run successfully against Claude Opus 4.6 via Vertex AI (heartbeat run `7e9592b8-2039-4e9c-8ff3-596bb3dd4a68`). Phases 1–5 (US1, US2, US3) are functionally complete and verified — 39/71 tasks done, 29 remaining for **Phase 6 (deploy.sh / rollback.sh / GH Actions deploy)**, **Phase 7 (rollback drill)**, **Phase 8 (observability)**, and **Phase 9 (polish)**. The remaining work is operational tooling on top of a working install — none of it is required for the install to function. Future phases may be tracked in a follow-up spec (e.g. `specs/002-operations-tooling/`).
+
 **Input**: Design documents from `specs/001-deploy-gcp-public-auth/`
 **Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, contracts/ ✅, quickstart.md ✅
 **Branch**: `001-deploy-gcp-public-auth`
