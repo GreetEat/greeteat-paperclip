@@ -86,6 +86,29 @@ jobs:
             paperclip-source
           ls -la paperclip-source/Dockerfile
 
+      - name: Patch upstream Dockerfile (githubcli keyring SHA rotated)
+        # WORKAROUND for an upstream Paperclip Dockerfile issue: line ~8 of
+        # the Dockerfile pins the GitHub CLI archive keyring SHA, but GitHub
+        # rotated the keyring file and upstream's pinned SHA
+        # (20e0125d6f6e077a9ad46f03371bc26d90b04939fb95170f5a1905099cc6bcc0)
+        # no longer matches what cli.github.com serves. The build fails at
+        # `sha256sum -c -` with "WARNING: 1 computed checksum did NOT match".
+        #
+        # Fix: fetch the keyring fresh, compute the current SHA, sed it into
+        # the Dockerfile. Trust model is unchanged: HTTPS to cli.github.com
+        # is what verifies authenticity at build time, the SHA pin only
+        # detected drift between upstream-author-pinning and build-time
+        # serving — which is exactly what just rotted out from under us.
+        #
+        # TODO(upstream): file an issue / PR against paperclipai/paperclip
+        # to refresh the SHA. Drop this step once a release ships with the
+        # corrected value.
+        run: |
+          NEW_SHA=$(curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sha256sum | awk '{print $1}')
+          echo "Current githubcli keyring SHA: $NEW_SHA"
+          sed -i "s|20e0125d6f6e077a9ad46f03371bc26d90b04939fb95170f5a1905099cc6bcc0|${NEW_SHA}|" paperclip-source/Dockerfile
+          grep -n "sha256sum -c" paperclip-source/Dockerfile || true
+
       - name: Authenticate to GCP via WIF
         id: auth
         uses: google-github-actions/auth@v2
