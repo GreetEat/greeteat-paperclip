@@ -21,17 +21,13 @@
 resource "google_service_account" "runtime_sa" {
   account_id   = "paperclip-runtime-sa"
   display_name = "Paperclip Cloud Run runtime"
-  description  = "Service account that the paperclip Cloud Run service runs as. Holds narrow grants for Cloud SQL, Cloud Logging, the four bootstrap secrets + the database-url secret, the paperclip Artifact Registry repo (image pull), and Vertex AI for Claude. NEVER use the project's default Compute SA — its broad legacy privileges violate the constitution's agent-sandboxing constraint."
+  description  = "Cloud Run runtime SA. Narrow grants for Cloud SQL, logging, secrets, AR, Vertex. NEVER reuse the default Compute SA."
   project      = var.project_id
 
-  # Sanity guard: refuse to run with the default Compute SA's account_id
-  # (which would only happen via a copy-paste mistake).
-  lifecycle {
-    precondition {
-      condition     = self.account_id == "paperclip-runtime-sa"
-      error_message = "runtime SA account_id must be paperclip-runtime-sa, never the project's default Compute SA."
-    }
-  }
+  # Note: account_id is a hardcoded literal above, so the
+  # never-the-default-Compute-SA invariant is enforced at config time
+  # (an earlier lifecycle.precondition was a tautology and used `self.*`
+  # which Terraform only allows in postconditions — removed).
 }
 
 # -----------------------------------------------------------------------------
