@@ -59,3 +59,79 @@ CVE-2025-61729
 # HIGH — net/url: incorrect IPv6 host literal parsing
 # Bundled binaries don't construct URLs from user-controlled IPv6 input.
 CVE-2026-25679
+
+# -----------------------------------------------------------------------------
+# Same golang stdlib CVEs in the OLDER @esbuild+linux-x64@0.18.20 binary
+# -----------------------------------------------------------------------------
+# Upstream Paperclip's image ships TWO esbuild versions because different
+# workspaces (server, ui, plugin-sdk) pin to different esbuild versions in
+# their pnpm lockfiles. The older 0.18.20 binary was built against a much
+# older Go runtime and trips a different set of CVE IDs than the newer
+# 0.25.12 binary. Reachability analysis is identical: esbuild is a
+# build-time bundler invoked during `pnpm build`, never at runtime, and
+# its compiled-in Go binaries don't make outbound network calls or parse
+# user-controlled input.
+#
+# Drop these once upstream pnpm-dedupes the workspaces or upgrades all
+# workspaces to a single esbuild version.
+
+# CRITICAL — net/netip: unexpected behavior from Is methods for
+# IPv4-mapped IPv6 addresses
+CVE-2024-24790
+
+# HIGH — net/http, x/net/http2: rapid stream resets cause excessive work
+# (HTTP/2 rapid reset, also known as CVE-2023-44487)
+CVE-2023-39325
+
+# HIGH — filepath: \??\ prefix not recognized as a Windows drive path
+CVE-2023-45283
+
+# HIGH — net/http, x/net/http2: unlimited CONTINUATION frames cause DoS
+CVE-2023-45288
+
+# HIGH — encoding/gob: Decoder.Decode panics on deeply nested structures
+CVE-2024-34156
+
+# HIGH — database/sql: Postgres Scan race condition
+CVE-2025-47907
+
+# -----------------------------------------------------------------------------
+# npm build-time / dev-time tooling vulnerabilities
+# -----------------------------------------------------------------------------
+# These are all in build-time or dev-server-only dependencies that the
+# production Paperclip runtime never invokes. The image ships them because
+# upstream Paperclip's Dockerfile installs the full pnpm dependency tree
+# (devDependencies included) so that monorepo workspace builds work — not
+# because Paperclip needs them at runtime.
+#
+# Reachability for each is "no" with the same logic: vite/rollup/esbuild
+# are bundlers (build only); node-tar is consumed by package install
+# tooling, not by Paperclip's storage backend (which uses the AWS SDK
+# against GCS, no tar in the loop).
+#
+# These should be re-reviewed when upstream Paperclip bumps its dev-tooling
+# pnpm versions (likely as part of the next major release).
+
+# HIGH — rollup: RCE via path traversal during bundling
+# Build-time only; rollup is not present in any code path Paperclip
+# executes at runtime.
+CVE-2026-27606
+
+# HIGH — node-tar: hardlink path traversal via drive-relative linkpath
+# Used by package install tooling (pnpm), not by Paperclip's storage
+# backend. No code path in production extracts user-controlled tarballs.
+CVE-2026-29786
+
+# HIGH — node-tar: file overwrite via drive-relative symlink traversal
+# Same reasoning as CVE-2026-29786.
+CVE-2026-31802
+
+# HIGH — vite: information disclosure via dev-server WebSocket bypass
+# DEV SERVER ONLY. Production runs the prebuilt UI bundle; vite dev is
+# never invoked in the deployed image.
+CVE-2026-39363
+
+# HIGH — vite: information disclosure via dev-server query parameter
+# manipulation
+# DEV SERVER ONLY. Same reasoning as CVE-2026-39363.
+CVE-2026-39364
