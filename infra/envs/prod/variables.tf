@@ -135,7 +135,7 @@ variable "monthly_budget_usd" {
 
 variable "paperclip_version" {
   type        = string
-  description = "Pinned Paperclip release tag (e.g. v0.42.0). The image build workflow clones Paperclip at this tag. Bumped via PR; the corresponding paperclip_image_digest is updated in the same PR."
+  description = "Pinned upstream Paperclip ref. Accepts EITHER a release tag (e.g. v2026.403.0, preferred) OR a full 40-char commit SHA (escape hatch when a needed fix is on master but not yet tagged). The image build workflow auto-detects which one this is. Bumped via PR; the corresponding paperclip_image_digest is updated in the same PR."
 }
 
 variable "paperclip_image_digest" {

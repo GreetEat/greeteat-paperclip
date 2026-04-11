@@ -3,8 +3,15 @@ name: Build Paperclip image
 # =============================================================================
 # Builds the Paperclip container image from upstream Paperclip's OFFICIAL
 # Dockerfile (https://github.com/paperclipai/paperclip/blob/master/Dockerfile)
-# at the pinned release tag and pushes it to Artifact Registry in the
+# at the pinned ref and pushes it to Artifact Registry in the
 # paperclip-492823 GCP project.
+#
+# `paperclip_version` accepts EITHER a release tag (e.g. v2026.403.0) OR a
+# full 40-char commit SHA (e.g. ac664df8e48326135a913e97ee7ed937d913586b).
+# Commit-SHA pinning is required when a needed fix lives on master but
+# hasn't been tagged yet — for example, the GHSA-68qg-g8mg-6pr7 RCE fix
+# landed in commit ac664df on 2026-04-10 but no release tag has shipped it.
+# Tag pins are preferred for normal upgrades; SHA pins are an escape hatch.
 #
 # Why we don't maintain our own Dockerfile:
 #   Paperclip's upstream Dockerfile is non-trivial — it builds three
@@ -19,20 +26,20 @@ name: Build Paperclip image
 #   1. Checks out THIS deployment-spec repo (for versions.auto.tfvars)
 #   2. Determines the paperclip_version to build (from workflow input or
 #      versions.auto.tfvars)
-#   3. Clones upstream Paperclip at the exact pinned tag
+#   3. Clones upstream Paperclip at the exact pinned ref (tag or SHA)
 #   4. Authenticates to GCP via project-scoped Workload Identity Federation
 #   5. Builds the image using upstream's Dockerfile in the cloned tree
 #   6. Scans with Trivy (HIGH/CRITICAL fail-on-no-fix)
 #   7. Pushes to Artifact Registry with both <version> and <git-sha> tags
 #   8. Outputs the immutable digest in the workflow summary so the operator
-#      can paste it into versions.tfvars
+#      can paste it into versions.auto.tfvars
 # =============================================================================
 
 on:
   workflow_dispatch:
     inputs:
       paperclip_version:
-        description: "Upstream Paperclip release tag to build (e.g. v0.42.0)"
+        description: "Upstream ref to build — release tag (v2026.403.0) or full 40-char commit SHA"
         required: true
         type: string
   pull_request:
@@ -74,17 +81,38 @@ jobs:
             echo "ERROR: paperclip_version is not set (currently '$ver')" >&2
             exit 1
           fi
-          echo "paperclip_version=$ver" >> "$GITHUB_OUTPUT"
-          echo "Building Paperclip $ver"
 
-      - name: Clone upstream Paperclip at pinned tag
+          # Detect whether $ver is a 40-char hex commit SHA or a release tag.
+          # SHA → use first 12 chars as the docker tag label so we don't ship
+          # 40-char tag names. Tag → use as-is.
+          if [[ "$ver" =~ ^[0-9a-f]{40}$ ]]; then
+            ref_kind="sha"
+            tag_label="sha-${ver:0:12}"
+          else
+            ref_kind="tag"
+            tag_label="$ver"
+          fi
+
+          echo "paperclip_version=$ver" >> "$GITHUB_OUTPUT"
+          echo "ref_kind=$ref_kind"     >> "$GITHUB_OUTPUT"
+          echo "tag_label=$tag_label"   >> "$GITHUB_OUTPUT"
+          echo "Building Paperclip $ver (kind=$ref_kind, tag_label=$tag_label)"
+
+      - name: Clone upstream Paperclip at pinned ref (tag or SHA)
         run: |
-          git clone \
-            --depth 1 \
-            --branch "${{ steps.version.outputs.paperclip_version }}" \
-            "${{ env.PAPERCLIP_REPO }}" \
-            paperclip-source
-          ls -la paperclip-source/Dockerfile
+          # `git clone --depth 1 --branch <ref>` only works for branches and
+          # tags. To support arbitrary commit SHAs we use the init+fetch
+          # pattern, which accepts any ref (tag, branch, or SHA) as long as
+          # the server allows fetching arbitrary SHAs (GitHub does — they
+          # set uploadpack.allowAnySHA1InWant=true).
+          mkdir paperclip-source
+          cd paperclip-source
+          git init -q
+          git remote add origin "${{ env.PAPERCLIP_REPO }}"
+          git fetch --depth 1 origin "${{ steps.version.outputs.paperclip_version }}"
+          git checkout -q FETCH_HEAD
+          echo "Checked out $(git rev-parse HEAD)"
+          ls -la Dockerfile
 
       - name: Patch upstream Dockerfile (githubcli keyring SHA rotated)
         # WORKAROUND for an upstream Paperclip Dockerfile issue: line ~8 of
@@ -126,16 +154,20 @@ jobs:
         run: |
           IMAGE_URL="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.IMAGE_NAME }}"
           cd paperclip-source
+          # Tag with the docker-friendly label (tag name OR sha-<short>) plus
+          # this deploy-spec repo's commit SHA, so the image carries both
+          # "what upstream commit/tag was built" and "which deploy-spec PR
+          # built it".
           docker build \
-            -t "$IMAGE_URL:${{ steps.version.outputs.paperclip_version }}" \
-            -t "$IMAGE_URL:${{ github.sha }}" \
+            -t "$IMAGE_URL:${{ steps.version.outputs.tag_label }}" \
+            -t "$IMAGE_URL:gh-${{ github.sha }}" \
             .
           echo "image_url=$IMAGE_URL" >> "$GITHUB_ENV"
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@0.35.0
         with:
-          image-ref:      ${{ env.image_url }}:${{ github.sha }}
+          image-ref:      ${{ env.image_url }}:gh-${{ github.sha }}
           format:         table
           severity:       HIGH,CRITICAL
           exit-code:      "1"
@@ -146,14 +178,14 @@ jobs:
 
       - name: Push image
         run: |
-          docker push "${{ env.image_url }}:${{ steps.version.outputs.paperclip_version }}"
-          docker push "${{ env.image_url }}:${{ github.sha }}"
+          docker push "${{ env.image_url }}:${{ steps.version.outputs.tag_label }}"
+          docker push "${{ env.image_url }}:gh-${{ github.sha }}"
 
       - name: Get immutable digest
         id: digest
         run: |
           digest=$(docker inspect --format='{{index .RepoDigests 0}}' \
-            "${{ env.image_url }}:${{ github.sha }}" | sed 's/.*@//')
+            "${{ env.image_url }}:gh-${{ github.sha }}" | sed 's/.*@//')
           if [ -z "$digest" ]; then
             echo "ERROR: failed to extract digest from docker inspect" >&2
             exit 1
