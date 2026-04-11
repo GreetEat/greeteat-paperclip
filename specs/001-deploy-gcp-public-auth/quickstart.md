@@ -95,14 +95,18 @@ A GCS bucket holds Terraform state with object versioning enabled.
 This is created out-of-band before the first apply because Terraform
 itself needs a state location.
 
+Bucket name is `paperclip-492823-tf-state` — project-prefixed because
+GCS bucket names are globally unique across all GCP customers, and
+`paperclip-tf-state` was already taken by another tenant.
+
 ```bash
-gcloud storage buckets create gs://paperclip-tf-state \
+gcloud storage buckets create gs://paperclip-492823-tf-state \
   --project=paperclip-492823 \
   --location=us-central1 \
   --uniform-bucket-level-access \
   --public-access-prevention
 
-gcloud storage buckets update gs://paperclip-tf-state \
+gcloud storage buckets update gs://paperclip-492823-tf-state \
   --versioning
 ```
 

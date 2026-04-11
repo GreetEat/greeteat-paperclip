@@ -6,7 +6,11 @@
 
 terraform {
   backend "gcs" {
-    bucket = "paperclip-tf-state"
+    # Project-prefixed because GCS bucket names are globally unique across
+    # all GCP customers — `paperclip-tf-state` was already taken when we
+    # tried T011. Project IDs are unique by definition, so prefixing with
+    # the project ID guarantees this name is available to us forever.
+    bucket = "paperclip-492823-tf-state"
     prefix = "envs/prod"
   }
 }
