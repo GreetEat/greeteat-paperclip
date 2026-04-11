@@ -71,13 +71,13 @@ resource "google_service_account_iam_member" "github_wif_binding" {
 locals {
   github_actions_roles = [
     "roles/editor",
-    "roles/iam.serviceAccountUser",         # required to attach paperclip-runtime-sa to Cloud Run
-    "roles/iam.workloadIdentityPoolAdmin",  # required for terraform to manage WIF resources via this same SA in subsequent applies
-    "roles/secretmanager.admin",             # editor doesn't include this
-    "roles/cloudsql.admin",                  # editor doesn't include this
-    "roles/run.admin",                       # editor doesn't include this
-    "roles/monitoring.admin",                # editor doesn't include this
-    "roles/logging.admin",                   # editor doesn't include this
+    "roles/iam.serviceAccountUser",        # required to attach paperclip-runtime-sa to Cloud Run
+    "roles/iam.workloadIdentityPoolAdmin", # required for terraform to manage WIF resources via this same SA in subsequent applies
+    "roles/secretmanager.admin",           # editor doesn't include this
+    "roles/cloudsql.admin",                # editor doesn't include this
+    "roles/run.admin",                     # editor doesn't include this
+    "roles/monitoring.admin",              # editor doesn't include this
+    "roles/logging.admin",                 # editor doesn't include this
   ]
 }
 

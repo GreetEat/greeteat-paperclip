@@ -2,10 +2,14 @@
 # Module: artifact-registry
 # =============================================================================
 # Creates the `paperclip` Docker repository in Artifact Registry where
-# build-image.yml pushes Paperclip container images. Conditionally grants
-# writer access to the GitHub Actions service account (created by the
-# workload-identity module) and reader access to the Cloud Run runtime
-# service account (created by the compute module in Phase 3).
+# build-image.yml pushes Paperclip container images. Grants writer access
+# to the GitHub Actions service account (created by the workload-identity
+# module).
+#
+# The Cloud Run runtime SA's reader binding is added by the compute module
+# in Phase 3, NOT here, to avoid a circular module reference between
+# artifact-registry ↔ compute (compute reads the repository ID from this
+# module while also creating the SA that needs image-pull access).
 # =============================================================================
 
 resource "google_artifact_registry_repository" "paperclip" {
@@ -41,14 +45,3 @@ resource "google_artifact_registry_repository_iam_member" "github_actions_writer
   member     = "serviceAccount:${var.github_actions_service_account_email}"
 }
 
-# Reader access for the Cloud Run runtime SA (image pull). Conditional
-# because the compute module creates this SA in Phase 3.
-resource "google_artifact_registry_repository_iam_member" "runtime_reader" {
-  count = var.runtime_service_account_email == null ? 0 : 1
-
-  project    = google_artifact_registry_repository.paperclip.project
-  location   = google_artifact_registry_repository.paperclip.location
-  repository = google_artifact_registry_repository.paperclip.name
-  role       = "roles/artifactregistry.reader"
-  member     = "serviceAccount:${var.runtime_service_account_email}"
-}

@@ -80,11 +80,11 @@ module "secrets" {
   source     = "../../modules/secrets"
   project_id = var.project_id
 
-  # runtime_service_account_email is null in Phase 2 — the data lookups
-  # validate that bootstrap-master-key.sh and bootstrap-gcs-hmac.sh have
-  # been run, but no IAM bindings are created. Phase 3 (T032) updates this
-  # to pass module.compute.runtime_service_account_email.
-  runtime_service_account_email = null
+  # Pure data-lookup module: validates that bootstrap-master-key.sh,
+  # bootstrap-better-auth-secret.sh, and bootstrap-gcs-hmac.sh have all
+  # run. IAM bindings on these secrets are created by the compute module
+  # in Phase 3 (the runtime SA's IAM lives there to break a circular
+  # reference between secrets ↔ compute).
 
   depends_on = [module.apis]
 }
@@ -102,28 +102,125 @@ module "artifact_registry" {
   project_id = var.project_id
   region     = var.region
 
+  # The runtime SA's reader binding lives in the compute module (Phase 3)
+  # to break a circular reference.
   github_actions_service_account_email = module.workload_identity.service_account_email
-
-  # runtime_service_account_email is null in Phase 2; Phase 3 (T032) updates
-  # this to pass module.compute.runtime_service_account_email so the runtime
-  # SA can pull images from the repository.
-  runtime_service_account_email = null
 
   depends_on = [module.apis]
 }
 
 # -----------------------------------------------------------------------------
-# Phase 3 — User Story 1 (added in T032)
+# Phase 3 — User Story 1 (wired in T032)
 # -----------------------------------------------------------------------------
-# module "database" { ... }
-# module "storage" { ... }
-# module "compute" { ... }
-# module "edge" { ... }
+
+module "database" {
+  source = "../../modules/database"
+
+  project_id                      = var.project_id
+  region                          = var.region
+  vpc_id                          = module.network.vpc_id
+  private_service_connection_id   = module.network.private_service_connection_id
+  cloud_sql_tier                  = var.cloud_sql_tier
+  cloud_sql_availability_type     = var.cloud_sql_availability_type
+  cloud_sql_backup_retention_days = var.cloud_sql_backup_retention_days
+
+  depends_on = [module.apis, module.network]
+}
+
+module "storage" {
+  source = "../../modules/storage"
+
+  project_id = var.project_id
+  region     = var.region
+
+  depends_on = [module.apis]
+}
+
+module "compute" {
+  source = "../../modules/compute"
+
+  project_id = var.project_id
+  region     = var.region
+  domain     = var.domain
+
+  paperclip_image_url    = "${module.artifact_registry.repository_url}/paperclip"
+  paperclip_image_digest = var.paperclip_image_digest
+
+  cloud_run_min_instances = var.cloud_run_min_instances
+  cloud_run_max_instances = var.cloud_run_max_instances
+  cloud_run_cpu           = var.cloud_run_cpu
+  cloud_run_memory        = var.cloud_run_memory
+
+  vpc_connector_id = module.network.connector_id
+
+  artifact_registry_repository_id = module.artifact_registry.repository_id
+  storage_bucket_name             = module.storage.bucket_name
+
+  master_key_secret_id           = module.secrets.master_key_secret_id
+  better_auth_secret_secret_id   = module.secrets.better_auth_secret_secret_id
+  database_url_secret_id         = module.database.database_url_secret_id
+  s3_access_key_id_secret_id     = module.secrets.s3_access_key_id_secret_id
+  s3_secret_access_key_secret_id = module.secrets.s3_secret_access_key_secret_id
+
+  depends_on = [
+    module.apis,
+    module.network,
+    module.secrets,
+    module.artifact_registry,
+    module.database,
+    module.storage,
+  ]
+}
+
+module "edge" {
+  source = "../../modules/edge"
+
+  project_id             = var.project_id
+  region                 = var.region
+  domain                 = var.domain
+  cloud_run_service_name = module.compute.service_name
+
+  depends_on = [module.apis, module.compute]
+}
 
 # -----------------------------------------------------------------------------
-# Phase 6 — User Story 4 (added in T049)
+# Phase 3 enabling — bootstrap-ceo Cloud Run Job
 # -----------------------------------------------------------------------------
-# module "jobs" { ... }
+# Front-loaded from Phase 6 (T044) so the seed-operator bootstrap (T034) can
+# run immediately after the first Phase 3 apply. The module currently hosts
+# only paperclipai-bootstrap-ceo; paperclipai-doctor lands in Phase 6.
+#
+# The job runs as the compute module's runtime SA, mounts the same secrets,
+# and uses the same VPC connector — so it inherits all the IAM the live
+# service has, no extra bindings required. depends_on = module.compute makes
+# the IAM-binding ordering explicit.
+
+module "jobs" {
+  source = "../../modules/jobs"
+
+  project_id = var.project_id
+  region     = var.region
+  domain     = var.domain
+
+  paperclip_image_url    = "${module.artifact_registry.repository_url}/paperclip"
+  paperclip_image_digest = var.paperclip_image_digest
+
+  vpc_connector_id              = module.network.connector_id
+  runtime_service_account_email = module.compute.service_account_email
+
+  master_key_secret_id         = module.secrets.master_key_secret_id
+  better_auth_secret_secret_id = module.secrets.better_auth_secret_secret_id
+  database_url_secret_id       = module.database.database_url_secret_id
+
+  depends_on = [
+    module.apis,
+    module.network,
+    module.secrets,
+    module.artifact_registry,
+    module.database,
+    module.compute,
+  ]
+}
 
 # -----------------------------------------------------------------------------
 # Phase 8 — User Story 6 (added in T058)

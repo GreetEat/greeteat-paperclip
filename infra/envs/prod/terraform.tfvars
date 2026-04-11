@@ -34,7 +34,7 @@ github_repository = "paperclipai/paperclip-greeteat"
 # Cloud SQL sizing
 # -----------------------------------------------------------------------------
 cloud_sql_tier                  = "db-custom-2-7680" # 2 vCPU, 7.5 GiB
-cloud_sql_availability_type     = "REGIONAL"          # HA — required for single-env
+cloud_sql_availability_type     = "REGIONAL"         # HA — required for single-env
 cloud_sql_backup_retention_days = 7
 
 # -----------------------------------------------------------------------------

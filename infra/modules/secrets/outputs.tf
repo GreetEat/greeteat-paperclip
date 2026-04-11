@@ -21,9 +21,9 @@ output "s3_secret_access_key_secret_id" {
 output "secret_short_names" {
   description = "Map of canonical short names to bare secret IDs (paperclip-*). Useful for Cloud Run secret mounts that take just the short name + version."
   value = {
-    master_key            = data.google_secret_manager_secret.master_key.secret_id
-    better_auth_secret    = data.google_secret_manager_secret.better_auth_secret.secret_id
-    s3_access_key_id      = data.google_secret_manager_secret.s3_access_key_id.secret_id
-    s3_secret_access_key  = data.google_secret_manager_secret.s3_secret_access_key.secret_id
+    master_key           = data.google_secret_manager_secret.master_key.secret_id
+    better_auth_secret   = data.google_secret_manager_secret.better_auth_secret.secret_id
+    s3_access_key_id     = data.google_secret_manager_secret.s3_access_key_id.secret_id
+    s3_secret_access_key = data.google_secret_manager_secret.s3_secret_access_key.secret_id
   }
 }

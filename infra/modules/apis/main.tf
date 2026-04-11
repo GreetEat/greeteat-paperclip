@@ -12,21 +12,21 @@
 
 locals {
   required_apis = [
-    "run.googleapis.com",            # Cloud Run service + jobs
-    "sqladmin.googleapis.com",       # Cloud SQL admin API
-    "compute.googleapis.com",        # VPC, subnet, firewalls (Cloud SQL needs this for private IP)
-    "secretmanager.googleapis.com",  # Secret Manager
-    "dns.googleapis.com",            # Cloud DNS
-    "vpcaccess.googleapis.com",      # Serverless VPC Connector (Cloud Run -> Cloud SQL)
-    "iam.googleapis.com",            # IAM resource manager
-    "iamcredentials.googleapis.com", # Service account token issuance (used by WIF)
-    "aiplatform.googleapis.com",     # Vertex AI (Claude via Model Garden)
-    "artifactregistry.googleapis.com", # Container image storage
-    "cloudscheduler.googleapis.com", # Daily doctor trigger
-    "monitoring.googleapis.com",     # Alerting policies, uptime checks
-    "logging.googleapis.com",        # Cloud Logging
-    "cloudbilling.googleapis.com",   # Billing budget alerts (FR-027)
-    "servicenetworking.googleapis.com", # Private Services Access (Cloud SQL private IP peering)
+    "run.googleapis.com",                  # Cloud Run service + jobs
+    "sqladmin.googleapis.com",             # Cloud SQL admin API
+    "compute.googleapis.com",              # VPC, subnet, firewalls (Cloud SQL needs this for private IP)
+    "secretmanager.googleapis.com",        # Secret Manager
+    "dns.googleapis.com",                  # Cloud DNS
+    "vpcaccess.googleapis.com",            # Serverless VPC Connector (Cloud Run -> Cloud SQL)
+    "iam.googleapis.com",                  # IAM resource manager
+    "iamcredentials.googleapis.com",       # Service account token issuance (used by WIF)
+    "aiplatform.googleapis.com",           # Vertex AI (Claude via Model Garden)
+    "artifactregistry.googleapis.com",     # Container image storage
+    "cloudscheduler.googleapis.com",       # Daily doctor trigger
+    "monitoring.googleapis.com",           # Alerting policies, uptime checks
+    "logging.googleapis.com",              # Cloud Logging
+    "cloudbilling.googleapis.com",         # Billing budget alerts (FR-027)
+    "servicenetworking.googleapis.com",    # Private Services Access (Cloud SQL private IP peering)
     "cloudresourcemanager.googleapis.com", # Project metadata, IAM policy management
   ]
 }

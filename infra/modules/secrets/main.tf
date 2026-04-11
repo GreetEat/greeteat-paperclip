@@ -1,21 +1,19 @@
 # =============================================================================
 # Module: secrets
 # =============================================================================
-# Looks up the Secret Manager secrets created by the bootstrap scripts
-# (bootstrap-master-key.sh, bootstrap-gcs-hmac.sh) and conditionally grants
-# `roles/secretmanager.secretAccessor` to the Cloud Run runtime service
-# account on each.
+# Looks up the four bootstrap-created Secret Manager secrets and exposes
+# their resource IDs to other modules. Pure data-lookup module — does NOT
+# create IAM bindings.
 #
-# Phase 2 (T022) instantiates this module WITHOUT runtime_service_account_email
-# — at that point, the data lookups validate that the bootstrap scripts have
-# run, but no IAM bindings are created.
+# IAM bindings on the Cloud Run runtime service account are created by
+# the compute module (in Phase 3), not here. This avoids a circular
+# module reference between secrets ↔ compute (compute reads secret IDs
+# from this module while also creating the SA that needs IAM access).
 #
-# Phase 3 (T032) updates the instantiation to pass the actual SA email from
-# the compute module, which activates the IAM bindings.
-#
-# The fourth secret — paperclip-database-url — is created by the database
+# The fifth secret — paperclip-database-url — is created by the database
 # module in Phase 3 (the password is generated as part of Cloud SQL user
-# creation). Its IAM binding lives in the database module, not here.
+# creation), and its IAM binding is also added by the compute module
+# alongside the bindings on these four secrets.
 # =============================================================================
 
 data "google_secret_manager_secret" "master_key" {
@@ -36,22 +34,4 @@ data "google_secret_manager_secret" "s3_access_key_id" {
 data "google_secret_manager_secret" "s3_secret_access_key" {
   secret_id = "paperclip-s3-secret-access-key"
   project   = var.project_id
-}
-
-# IAM bindings: only created when the runtime SA email is provided.
-locals {
-  secret_ids_for_iam = var.runtime_service_account_email == null ? [] : [
-    data.google_secret_manager_secret.master_key.id,
-    data.google_secret_manager_secret.better_auth_secret.id,
-    data.google_secret_manager_secret.s3_access_key_id.id,
-    data.google_secret_manager_secret.s3_secret_access_key.id,
-  ]
-}
-
-resource "google_secret_manager_secret_iam_member" "runtime_access" {
-  for_each = toset(local.secret_ids_for_iam)
-
-  secret_id = each.value
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${var.runtime_service_account_email}"
 }
