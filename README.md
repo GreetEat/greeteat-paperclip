@@ -90,6 +90,24 @@ See **[specs/001-deploy-gcp-public-auth/quickstart.md](specs/001-deploy-gcp-publ
 5. The bootstrap dance (first user creation with `disableSignUp` flip)
 6. Verification smoke tests
 
+## Local environment setup
+
+Deployment-specific values (like your Cloud Run URL) are **not committed to git**. After cloning, create a local override file:
+
+```sh
+cd infra/envs/prod
+cp terraform.tfvars.local.example terraform.tfvars.local
+# Edit terraform.tfvars.local with your real Cloud Run URL
+```
+
+Then always apply with the override:
+
+```sh
+terraform apply -var-file=terraform.tfvars.local
+```
+
+The `*.tfvars.local` pattern is gitignored. See `terraform.tfvars` for inline documentation on what each variable does.
+
 ## Built with
 
 - [Paperclip](https://github.com/paperclipai/paperclip) — AI agent orchestration

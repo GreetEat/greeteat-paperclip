@@ -1,0 +1,23 @@
+# =============================================================================
+# Local operator overrides — copy to terraform.tfvars.local and fill in.
+# =============================================================================
+# terraform.tfvars.local is gitignored (*.tfvars.local in .gitignore).
+# It keeps deployment-specific values out of the public repo.
+#
+# Usage:
+#   cp terraform.tfvars.local.example terraform.tfvars.local
+#   # edit with your real values
+#   terraform apply -var-file=terraform.tfvars.local
+#
+# Terraform loads terraform.tfvars + versions.auto.tfvars automatically,
+# then the -var-file flag merges your local overrides on top.
+
+# Your Cloud Run vanity URL (deterministic format):
+#   https://<service>-<project-number>.<region>.run.app
+#
+# Find it after first apply:
+#   terraform output service_uri
+#
+# Or construct it: service=paperclip, project number from
+#   gcloud projects describe <project-id> --format='value(projectNumber)'
+public_url_override = "https://paperclip-<YOUR_PROJECT_NUMBER>.us-central1.run.app"

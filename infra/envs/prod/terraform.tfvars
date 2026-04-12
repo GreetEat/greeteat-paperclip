@@ -38,6 +38,18 @@ region     = "us-central1"
 # (full hostname, no scheme) and clear `public_url_override`. The edge
 # module will then provision Cloud DNS + the domain mapping and PUBLIC_URL
 # becomes `https://${domain}`.
+# IMPORTANT: The actual Cloud Run URL is NOT committed to git (it's
+# deployment-specific). Create a local override file:
+#
+#   cp terraform.tfvars.local.example terraform.tfvars.local
+#   # edit terraform.tfvars.local with your real Cloud Run URL
+#
+# Then apply with:  terraform apply -var-file=terraform.tfvars.local
+#
+# The *.tfvars.local pattern is gitignored. Without the override,
+# Terraform uses the placeholder below, which will break Better Auth's
+# trustedOrigins check (sign-ins fail because PUBLIC_URL doesn't match
+# the request origin).
 domain              = ""
 public_url_override = "https://<your-cloud-run-url>"
 
