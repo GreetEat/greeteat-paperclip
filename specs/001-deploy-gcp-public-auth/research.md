@@ -861,7 +861,7 @@ service account keys never expire. Both are RAPT-immune.
 **Decision**: The first deployment runs without a custom DNS domain.
 PAPERCLIP_PUBLIC_URL is set to the Cloud Run *.run.app vanity URL:
 
-    https://paperclip-280667224791.us-central1.run.app
+    https://<your-cloud-run-url>
 
 The edge module (Cloud DNS managed zone + Cloud Run domain mapping)
 is wrapped with `count = var.domain != "" ? 1 : 0` and SKIPPED while
@@ -874,7 +874,7 @@ MVP acceptance test (US1) without waiting for domain procurement.
 **The vanity URL is deterministic** in Cloud Run v2: the format is
 `https://<service>-<project_number>.<region>.run.app`. For
 paperclip + project number 280667224791 + us-central1, that resolves
-to `https://paperclip-280667224791.us-central1.run.app`. The URL is
+to `https://<your-cloud-run-url>`. The URL is
 stable for the lifetime of the project — it's derived from the
 project NUMBER (which is permanent), not the project ID, and it
 doesn't change even if the service is deleted and recreated.

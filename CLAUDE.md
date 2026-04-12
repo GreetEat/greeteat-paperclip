@@ -10,7 +10,7 @@ infrastructure, specs, and deployment scripts.
 
 - **GCP project**: `paperclip-492823` (dedicated, `greeteat.com` org)
 - **Region**: `us-central1`
-- **Public URL**: https://paperclip-280667224791.us-central1.run.app
+- **Public URL**: https://<your-cloud-run-url>
 - **Terraform state**: GCS bucket `paperclip-492823-tf-state`
 - **Persistent state**: GCS bucket `paperclip-492823-state` mounted at `/paperclip` via GCS FUSE
 

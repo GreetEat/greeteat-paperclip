@@ -55,7 +55,7 @@ not modify any GCP state.
 ### 1a. Confirm authentication and project context
 
 ```bash
-gcloud auth list                           # active account = victor@greeteat.com (or your operator)
+gcloud auth list                           # active account = operator@example.com (or your operator)
 gcloud config set project paperclip-492823
 gcloud projects describe paperclip-492823 \
   --format="value(projectId,parent.id,lifecycleState)"
@@ -309,7 +309,7 @@ gcloud logging read "resource.type=cloud_run_job AND \
 
 The URL looks like:
 
-    https://paperclip-280667224791.us-central1.run.app/invite/pcp_bootstrap_<48-hex>
+    https://<your-cloud-run-url>/invite/pcp_bootstrap_<48-hex>
 
 **Store the URL in your password manager.** It expires in 72 hours
 (the default `--expires-hours` for the CLI). If you don't claim it in
@@ -391,7 +391,7 @@ vars (flipping the variable back to `true`). Apply it.
 ```bash
 curl -sS -X POST -H "Content-Type: application/json" \
   -d '{"email":"attacker@evil.com","password":"x","name":"x"}' \
-  https://paperclip-280667224791.us-central1.run.app/api/auth/sign-up/email \
+  https://<your-cloud-run-url>/api/auth/sign-up/email \
   -w "\nHTTP %{http_code}\n"
 ```
 
