@@ -76,6 +76,11 @@ variable "storage_bucket_name" {
   description = "Name of the uploads bucket. Used as the value of PAPERCLIP_STORAGE_S3_BUCKET. The runtime SA does NOT need direct bucket IAM — Paperclip uses HMAC creds for the storage backend."
 }
 
+variable "state_bucket_name" {
+  type        = string
+  description = "Name of the state bucket. Mounted via GCS FUSE at /paperclip on the Cloud Run service to persist agent instructions, memory, workspaces, and config.json across instance recycles. The runtime SA gets storage.objectUser on this bucket."
+}
+
 variable "master_key_secret_id" {
   type        = string
   description = "Full Secret Manager resource ID of paperclip-master-key (from secrets module)."

@@ -176,6 +176,7 @@ module "compute" {
 
   artifact_registry_repository_id = module.artifact_registry.repository_id
   storage_bucket_name             = module.storage.bucket_name
+  state_bucket_name               = module.storage.state_bucket_name
 
   master_key_secret_id           = module.secrets.master_key_secret_id
   better_auth_secret_secret_id   = module.secrets.better_auth_secret_secret_id
@@ -232,6 +233,7 @@ module "jobs" {
 
   vpc_connector_id              = module.network.connector_id
   runtime_service_account_email = module.compute.service_account_email
+  state_bucket_name             = module.storage.state_bucket_name
 
   master_key_secret_id         = module.secrets.master_key_secret_id
   better_auth_secret_secret_id = module.secrets.better_auth_secret_secret_id

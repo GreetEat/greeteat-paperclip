@@ -38,6 +38,11 @@ variable "vpc_connector_id" {
   description = "Serverless VPC Connector ID from the network module. Required so the job can reach Cloud SQL via private IP."
 }
 
+variable "state_bucket_name" {
+  type        = string
+  description = "Name of the state bucket. Mounted via GCS FUSE at /paperclip on the Cloud Run Job so the bootstrap-ceo wrapper's config.json write persists and is visible to the live service."
+}
+
 variable "runtime_service_account_email" {
   type        = string
   description = "Email of paperclip-runtime-sa from the compute module. The job runs as the same SA the live service runs as so secret IAM and Vertex IAM are already in place."

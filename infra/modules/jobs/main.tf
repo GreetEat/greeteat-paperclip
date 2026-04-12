@@ -40,8 +40,24 @@ resource "google_cloud_run_v2_job" "bootstrap_ceo" {
 
       timeout = "300s"
 
+      # Same GCS FUSE mount as the Cloud Run service — persistent /paperclip
+      # so the bootstrap-ceo wrapper's config.json write persists and is
+      # visible to the live service on the same shared bucket.
+      volumes {
+        name = "paperclip-state"
+        gcs {
+          bucket    = var.state_bucket_name
+          read_only = false
+        }
+      }
+
       containers {
         image = "${var.paperclip_image_url}@${var.paperclip_image_digest}"
+
+        volume_mounts {
+          name       = "paperclip-state"
+          mount_path = "/paperclip"
+        }
 
         # CMD override: run a wrapper shell script that materializes a
         # minimal config.json (required by bootstrap-ceo even though it

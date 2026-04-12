@@ -64,6 +64,15 @@ resource "google_project_iam_member" "aiplatform_user" {
 # other modules — created here to break the module-level circular reference)
 # -----------------------------------------------------------------------------
 
+# Read-write access to the state bucket (GCS FUSE mount at /paperclip).
+# objectUser includes create, read, update, delete, list — everything
+# GCS FUSE needs for a read-write mount.
+resource "google_storage_bucket_iam_member" "state_bucket_access" {
+  bucket = var.state_bucket_name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.runtime_sa.email}"
+}
+
 # Image pull from the paperclip Artifact Registry repository
 resource "google_artifact_registry_repository_iam_member" "image_pull" {
   project    = var.project_id
@@ -150,11 +159,28 @@ resource "google_cloud_run_v2_service" "paperclip" {
       egress    = "PRIVATE_RANGES_ONLY" # only RFC1918 + Google APIs go via the connector
     }
 
+    # GCS FUSE volume — persistent /paperclip filesystem shared across all
+    # instances. Without this, /paperclip is a per-instance ephemeral tmpfs
+    # and agents lose instructions, memory, and workspace files on every
+    # instance recycle. See research.md Decision 21.
+    volumes {
+      name = "paperclip-state"
+      gcs {
+        bucket    = var.state_bucket_name
+        read_only = false
+      }
+    }
+
     containers {
       image = "${var.paperclip_image_url}@${var.paperclip_image_digest}"
 
       ports {
         container_port = 3100 # Paperclip's default; matches upstream Dockerfile EXPOSE
+      }
+
+      volume_mounts {
+        name       = "paperclip-state"
+        mount_path = "/paperclip"
       }
 
       resources {
@@ -317,6 +343,7 @@ resource "google_cloud_run_v2_service" "paperclip" {
     google_secret_manager_secret_iam_member.s3_access_key_id_access,
     google_secret_manager_secret_iam_member.s3_secret_access_key_access,
     google_artifact_registry_repository_iam_member.image_pull,
+    google_storage_bucket_iam_member.state_bucket_access,
     google_project_iam_member.cloudsql_client,
     google_project_iam_member.logging_writer,
     google_project_iam_member.aiplatform_user,

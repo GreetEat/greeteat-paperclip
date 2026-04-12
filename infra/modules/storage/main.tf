@@ -44,6 +44,42 @@ resource "google_storage_bucket" "uploads" {
   }
 }
 
+# -----------------------------------------------------------------------------
+# State bucket — persistent /paperclip filesystem for Cloud Run
+# -----------------------------------------------------------------------------
+# Mounted via GCS FUSE at /paperclip on both the Cloud Run service and
+# Cloud Run Jobs. Holds agent instructions (managed by Paperclip's
+# "managed" instructions bundle), PARA memory files, daily notes,
+# workspace checkouts, and the paperclip config.json. Without this mount
+# the /paperclip directory is a per-instance ephemeral tmpfs and agent
+# state is lost on every instance recycle.
+#
+# The runtime SA (paperclip-runtime-sa) gets storage.objectUser on this
+# bucket — that grant lives in the compute module alongside all other
+# runtime-SA IAM bindings.
+
+resource "google_storage_bucket" "state" {
+  name                        = "${var.project_id}-state"
+  location                    = var.region
+  project                     = var.project_id
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+
+  versioning {
+    enabled = true
+  }
+
+  labels = {
+    service = "paperclip"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 # Look up paperclip-storage-sa, which was created by bootstrap-gcs-hmac.sh
 # (T013 / T023). If this data lookup fails, the operator hasn't run the
 # bootstrap script — that's the safety check we want.
