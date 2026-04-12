@@ -110,6 +110,16 @@ gcloud storage buckets update gs://paperclip-492823-tf-state \
   --versioning
 ```
 
+### 1d. The persistent state bucket (created by Terraform)
+
+A second GCS bucket, `paperclip-492823-state`, serves as the GCS FUSE mount
+at `/paperclip` inside Cloud Run. This is where Paperclip stores agent
+instructions, PARA memory, workspaces, and `config.json`.
+
+**No operator action needed here** — this bucket is created automatically by
+Terraform (`module.storage`) during the first apply. It is documented here so
+operators know it exists and understand its purpose.
+
 ---
 
 ## 2. Bootstrap secrets
@@ -205,6 +215,7 @@ The script (per `contracts/deploy-cli.md`):
    - `paperclip-vpc`, `paperclip-subnet`, `paperclip-connector`
    - `paperclip-pg` Cloud SQL instance (~15–25 minutes)
    - `paperclip-492823-uploads` GCS bucket
+   - `paperclip-492823-state` GCS bucket (persistent `/paperclip` state via GCS FUSE mount)
    - Secret Manager IAM bindings (the secrets from step 2 must already
      exist)
    - `paperclip` Artifact Registry repository and IAM

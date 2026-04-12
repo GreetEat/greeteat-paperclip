@@ -1044,6 +1044,40 @@ both for break-glass debugging and for CI smoke tests.
 
 ---
 
+## Decision 21 — GCS FUSE mount for persistent `/paperclip` state
+
+**Decision**: Mount GCS bucket `paperclip-492823-state` at `/paperclip` via
+Cloud Run v2 native GCS FUSE volume.
+
+**Rationale**: Paperclip writes agent instructions, PARA memory, workspaces,
+and `config.json` to `/paperclip` (set via `PAPERCLIP_HOME`). On Cloud Run's
+default ephemeral tmpfs, all of this state was lost on every instance recycle.
+The dashboard showed "Instructions root does not exist" after each restart,
+and agents lost all accumulated context. The GCS FUSE mount makes `/paperclip`
+persistent and shared across all Cloud Run instances.
+
+**Applied to**: Both the Cloud Run service (`infra/modules/compute/`) and the
+Cloud Run Job (`infra/modules/jobs/`). The runtime service account
+(`paperclip-runtime-sa`) is granted `roles/storage.objectUser` on the
+`paperclip-492823-state` bucket.
+
+**GCS FUSE characteristics**:
+- ~10-50ms metadata latency (acceptable for small text files like agent
+  instructions and config)
+- No file locking (OK because each agent writes its own subtree; no
+  concurrent writers to the same file)
+- Eventual consistency on list-after-write (acceptable for this workload)
+
+**Alternatives considered**:
+- Baking instructions into the container image: rejected because it loses
+  managed-mode flexibility (operators need to update instructions at runtime
+  without rebuilding and redeploying the image).
+- Mounting as a Secret Manager volume: rejected because Secret Manager
+  volumes are read-only, which conflicts with Paperclip's expectation of a
+  writable `/paperclip` directory.
+
+---
+
 ## Resolved spec deferrals
 
 The spec's "Decisions deferred to planning" section listed six items;

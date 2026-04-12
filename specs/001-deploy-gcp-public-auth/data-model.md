@@ -77,6 +77,15 @@ GCP Project: paperclip-492823 (existing, shared)
 │       ├── Labels: service=paperclip
 │       └── Service Account: paperclip-storage-sa
 │           └── HMAC key: stored in Secret Manager (interop credentials)
+│   └── GCS Bucket: paperclip-492823-state
+│       ├── Location: regional (us-central1)
+│       ├── Uniform bucket-level access: ENFORCED
+│       ├── Public access prevention: ENFORCED
+│       ├── Labels: service=paperclip
+│       └── Purpose: persistent /paperclip state via GCS FUSE mount
+│           (agent instructions, PARA memory, workspaces, config.json)
+│           Mounted in Cloud Run service + Cloud Run Jobs
+│           Runtime SA has roles/storage.objectUser on this bucket
 │
 ├── Secret Manager secrets (each with label service=paperclip)
 │   ├── paperclip-master-key            (32 bytes; bootstrap-master-key.sh)
@@ -184,7 +193,7 @@ GCP Project: paperclip-492823 (existing, shared)
     └── Uptime Check: GET /health, every 1 min, from multiple regions
 
 (Terraform state lives in a fifth managed resource:)
-└── GCS Bucket: paperclip-tf-state
+└── GCS Bucket: paperclip-492823-tf-state
     ├── Object versioning: ON
     ├── Public access prevention: ENFORCED
     └── IAM: only Victor's user and the GitHub WIF SA
@@ -207,7 +216,7 @@ GCP Project: paperclip-492823 (existing, shared)
 | paperclip Artifact Registry repo | First `terraform apply` | Almost never | Paperclip teardown |
 | paperclip-github WIF pool | First `terraform apply` | New providers added | Paperclip teardown |
 | Alerting policies | First `terraform apply` | Threshold tuning | Paperclip teardown |
-| paperclip-tf-state GCS bucket | One-time, before first apply (manual) | Never | Paperclip teardown (last) |
+| paperclip-492823-tf-state GCS bucket | One-time, before first apply (manual) | Never | Paperclip teardown (last) |
 
 ### Validation rules (enforced by Terraform / module variables / CI)
 

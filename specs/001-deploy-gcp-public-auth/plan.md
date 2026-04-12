@@ -118,7 +118,7 @@ are sufficient for the spec's requirements.
 **Email**: None. Out of scope per spec assumption "Email infrastructure".
 
 **IaC tool**: Terraform with the `google` and `google-beta` providers,
-state in a GCS bucket inside `paperclip-492823` (`paperclip-tf-state`),
+state in a GCS bucket inside `paperclip-492823` (`paperclip-492823-tf-state`),
 object versioning on for state safety, provider versions pinned in
 `.terraform.lock.hcl`. GCS-backed Terraform state has built-in
 object-level locking via the Google provider, so no external lock
