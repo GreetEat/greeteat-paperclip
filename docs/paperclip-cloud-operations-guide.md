@@ -303,6 +303,46 @@ fetch("/api/companies/YOUR_COMPANY_ID/routines", {
 | Twice daily (9am + 3pm) | `0 9,15 * * 1-5` |
 | First of every month | `0 9 1 * *` |
 
+### Routine variables and templates
+
+Routine titles and descriptions support `{{variable}}` placeholders that get filled in when the routine fires:
+
+**Built-in variable**: `{{date}}` — expands to today's date (YYYY-MM-DD)
+
+**Custom variables**: define your own with types (`text`, `textarea`, `number`, `boolean`, `select`)
+
+**Example** — a routine with dynamic title:
+
+```json
+{
+  "title": "Social media post for {{date}} — {{platform}}",
+  "description": "Post the next item from the content calendar.\nPlatform: {{platform}}\nContent type: {{content_type}}",
+  "variables": [
+    { "name": "platform", "type": "select", "options": ["linkedin", "x", "both"], "defaultValue": "linkedin", "required": true },
+    { "name": "content_type", "type": "select", "options": ["text", "image", "video", "thread"], "defaultValue": "text", "required": true }
+  ]
+}
+```
+
+When this fires on April 14, the created issue becomes:
+
+- Title: "Social media post for 2026-04-14 — linkedin"
+- Description includes the interpolated platform and content type
+
+This is powerful for recurring posts — each fired issue gets today's date automatically, so the agent knows exactly which day's content to post.
+
+### How secrets, routines, and agents work together
+
+Each piece has a distinct job:
+
+```
+Routine         → WHAT to do + WHEN (title, description, schedule)
+Agent config    → HOW to authenticate (env vars with encrypted secret refs)
+Agent skills    → HOW to call the API (curl commands, API formats)
+```
+
+Secrets live in the agent's environment, not in the routine. The routine just creates the issue — the agent already has the API tokens it needs when it wakes up.
+
 ### Managing routines
 
 - **Pause**: stops firing, can resume later
@@ -395,6 +435,85 @@ Routine fires → CMO agent wakes
 | Social media APIs | Free (within rate limits) |
 
 A 3x/week video posting routine: **~$5-15/month total**.
+
+## Recurring social media posting
+
+### LinkedIn — 3x weekly posting routine
+
+**One-time setup:**
+
+1. Store LinkedIn credentials via agent config UI (see Part 2)
+2. Have the CMO create a content calendar (assign an issue for this first)
+3. Create the routine:
+
+```
+Title:       "LinkedIn post for {{date}}"
+Description: "Check the content calendar for today's scheduled LinkedIn post.
+              If one is scheduled:
+              1. Read the post content from the calendar
+              2. Post to LinkedIn via the API
+              3. Confirm with a link to the live post
+              If nothing is scheduled for today, comment 'No post scheduled' and mark done."
+Agent:       CMO
+Project:     Social Media
+Schedule:    Mon/Wed/Fri at 9am ET (cron: 0 9 * * 1,3,5)
+```
+
+The `{{date}}` variable means each issue is automatically scoped to today — the CMO doesn't need to figure out which day's content to post.
+
+### X (Twitter) — daily posting routine
+
+```
+Title:       "X post for {{date}}"
+Description: "Post today's X content from the content calendar.
+              For data-driven posts (WallStreetStats insights):
+              1. Fetch the latest sentiment data
+              2. Pick the most interesting shift
+              3. Write a tweet with the $GEAT cashtag if relevant
+              4. Post via X API
+              If a thread is scheduled, post all parts in sequence."
+Agent:       CMO
+Schedule:    Every weekday at 10am ET (cron: 0 10 * * 1-5)
+```
+
+### Reading account stats from LinkedIn and X
+
+Set up a weekly analytics routine so the CMO tracks what's working:
+
+```
+Title:       "Social media analytics report — week of {{date}}"
+Description: "Pull performance data from LinkedIn and X for the past 7 days.
+
+              LinkedIn:
+              - GET https://api.linkedin.com/v2/organizationalEntityShareStatistics?q=organizationalEntity&organizationalEntity=$LINKEDIN_ORG_URN&timeIntervals.timeGranularityType=DAY&timeIntervals.timeRange.start=LAST_7_DAYS_EPOCH_MS
+              - Extract: impressions, clicks, engagement rate, follower change
+
+              X/Twitter:
+              - GET https://api.x.com/2/users/{user_id}/tweets?tweet.fields=public_metrics&start_time=LAST_7_DAYS_ISO
+              - Extract: impressions, likes, retweets, replies per post
+
+              Deliverables:
+              1. Summary table: metric | this week | last week | change
+              2. Top performing post (highest engagement)
+              3. Recommendation: what to do more/less of next week
+
+              Post the report as a comment on this issue."
+Agent:       CMO (or Head of Product Research for deeper analysis)
+Schedule:    Every Monday at 8am ET (cron: 0 8 * * 1)
+```
+
+This creates a weekly issue every Monday. The agent pulls stats, compares week-over-week, and posts a structured report. Board members read the issue comments for insights.
+
+### Combining posting + analytics for optimization
+
+The analytics routine can feed back into the content strategy:
+
+1. **Monday 8am**: Analytics routine fires → CMO reviews last week's performance
+2. **Monday 9am**: CMO updates the content calendar based on what worked
+3. **Mon/Wed/Fri 10am**: Posting routines fire → CMO posts optimized content
+4. **Repeat**: data-driven content improvement loop, fully automated
+
+To set this up, just create the two routines (analytics + posting) and make sure the analytics one fires BEFORE the posting ones. The CMO will naturally read the analytics report before deciding what to post.
 
 ## Multi-agent content pipeline
 
