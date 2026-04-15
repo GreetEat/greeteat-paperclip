@@ -51,7 +51,7 @@ Goals are strategic objectives that organize your work. They don't directly trig
 1. Dashboard → **Goals** (left sidebar)
 2. Click **New Goal**
 3. Fill in:
-   - **Title**: clear, outcome-oriented (e.g., "Grow GreetEat user base to 10K MAU")
+   - **Title**: clear, outcome-oriented (e.g., "Grow user base to 10K MAU")
    - **Level**: `company` (top-level strategy), `team`, `agent`, or `task`
    - **Status**: `planned` or `active`
 4. Click **Create**
@@ -69,7 +69,7 @@ This is the primary way you get things done.
 
 1. Dashboard → **Issues** or click **New Issue** (top right, or from within a project)
 2. Fill in:
-   - **Title**: specific and actionable (e.g., "Research top 5 competitors for GreetEat")
+   - **Title**: specific and actionable (e.g., "Research top 5 competitors in our market")
    - **Description**: the brief. Be specific about deliverables, constraints, audience. The more context you give, the better the agent's output.
    - **Assignee**: pick the right agent (see below)
    - **Priority**: `critical`, `high`, `medium`, `low`
@@ -92,14 +92,14 @@ The assigned agent will be woken up and start working. Watch the **Live Runs** v
 
 **Good** (specific, actionable):
 
-> Research the top 5 competitors to GreetEat's virtual meals platform.
+> Research the top 5 competitors in our market.
 >
 > Deliverables:
 > - Competitive matrix (features, pricing, market position)
 > - Gap analysis: what do they offer that we don't?
-> - Opportunity list: where can GreetEat differentiate?
+> - Opportunity list: where can we differentiate?
 >
-> Focus on B2B-oriented competitors. Include any that partner with food delivery services.
+> Focus on direct competitors and adjacent players.
 
 **Bad** (vague):
 
@@ -263,7 +263,7 @@ Here's how to set up a full social media workflow:
 
 ### 1. Create the strategy (one-time)
 
-- **Create a goal**: "Build GreetEat social media presence"
+- **Create a goal**: "Build company social media presence"
 - **Create a project**: "Social Media" linked to the goal
 - **Create an issue for CEO**: "Develop LinkedIn + X content strategy and draft first 5 posts for each platform"
 - CEO delegates to CMO → CMO drafts content calendar and initial posts
@@ -299,19 +299,19 @@ Here's how to set up a full social media workflow:
 
 Create an issue for the **Head of Product Research**:
 
-> **Title**: Competitive analysis — virtual business meals market
+> **Title**: Competitive analysis — our market
 >
 > **Description**:
-> Analyze the competitive landscape for virtual business meals platforms.
+> Analyze the competitive landscape in our market.
 >
 > Deliverables:
 > 1. Market map: who are the players? (direct competitors + adjacent)
 > 2. Feature comparison matrix
 > 3. Pricing intelligence (where publicly available)
-> 4. SWOT analysis for GreetEat vs top 3 competitors
+> 4. SWOT analysis vs top 3 competitors
 > 5. Recommendation: where should we invest to differentiate?
 >
-> Focus on the US/Canada market. Include any companies that combine video conferencing with food delivery or corporate catering.
+> Focus on our primary market. Include direct and adjacent competitors.
 
 The agent researches via web search, compiles a structured report, and posts results as issue comments with tables and citations.
 
@@ -389,4 +389,4 @@ Set monthly budgets per agent to prevent runaway spend.
 
 ---
 
-*Written for Paperclip commit `ac664df` (April 10, 2026, between v2026.403.0 and v2026.410.0). Paperclip is evolving rapidly — verify against your deployed version's docs.*
+*Written for Paperclip (April 2026, commit ac664df). Paperclip evolves rapidly — verify against your deployed version.*
