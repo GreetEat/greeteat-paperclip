@@ -325,13 +325,13 @@ Each time an agent runs a heartbeat, it uses LLM tokens which cost money. Costs 
 
 | Model | Relative cost | Best for |
 |---|---|---|
-| **Claude Opus 4.6** | $$$ | Strategy, complex reasoning, CEO decisions |
-| **Claude Sonnet 4.6** | $$ | Content creation, research, routine tasks |
-| **Claude Haiku 4.5** | $ | Simple lookups, data formatting, quick tasks |
+| **Premium model** (e.g., Opus) | $$$ | Strategy, complex reasoning, CEO decisions |
+| **Standard model** (e.g., Sonnet) | $$ | Content creation, research, routine tasks |
+| **Lightweight model** (e.g., Haiku) | $ | Simple lookups, data formatting, quick tasks |
 
 ### Reducing costs
 
-- **Use Sonnet for routine agents** (CMO, Research) — reserve Opus for the CEO. Change in Agent → Configuration → Model.
+- **Use a standard model for routine agents** (CMO, Research) — reserve the premium model for the CEO. Change in Agent → Configuration → Model.
 - **Lower max turns per run** — Agent → Configuration → Advanced → "Max turns per run". Default is 1000; most heartbeats finish in 10-30 turns. Setting it to 100 is a safe limit.
 - **Keep periodic heartbeats off** — Agent → Configuration → Runtime → "Heartbeat enabled" should be off. Agents only run when they have assigned work.
 - **Increase cooldown** — Agent → Configuration → Runtime → "Cooldown" to 60 seconds. Prevents rapid re-wakes from comment bursts.
@@ -389,4 +389,4 @@ Set monthly budgets per agent to prevent runaway spend.
 
 ---
 
-*Written for Paperclip (April 2026, commit ac664df). Paperclip evolves rapidly — verify against your deployed version.*
+*Written for Paperclip (April 2026). Paperclip evolves rapidly — verify against your deployed version.*
