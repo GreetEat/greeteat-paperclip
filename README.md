@@ -2,6 +2,8 @@
 
 Reference implementation for deploying [Paperclip](https://github.com/paperclipai/paperclip) — the open-source AI agent orchestration platform — to **Google Cloud Run** with Vertex AI Claude.
 
+> **Paperclip version**: pinned to commit [`ac664df`](https://github.com/paperclipai/paperclip/commit/ac664df8e48326135a913e97ee7ed937d913586b) (between `v2026.403.0` and the upcoming `v2026.410.0`). Paperclip is evolving rapidly — APIs, UI, and agent behavior may change between versions. We pinned a commit instead of a tag because the latest tag doesn't include the [GHSA-68qg-g8mg-6pr7](https://github.com/paperclipai/paperclip/security/advisories/GHSA-68qg-g8mg-6pr7) security fix.
+
 ## What's here
 
 This is a **deployment-configuration repo**, not application code. It contains everything needed to run Paperclip in a production GCP environment:
