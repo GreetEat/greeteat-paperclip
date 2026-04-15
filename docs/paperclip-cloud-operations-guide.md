@@ -223,38 +223,22 @@ Agents can interact with LinkedIn, X/Twitter, Slack, analytics platforms, and an
 | **Slack** | [api.slack.com/apps](https://api.slack.com/apps) → Create App | Bot token (`xoxb-...`) |
 | **Google Analytics** | Google Cloud Console → APIs & Services | Service account key or OAuth token |
 
-### Storing credentials as secrets
+### Storing credentials and configuring agents (via the dashboard)
 
-In the browser dev tools console (while signed in):
+Paperclip has built-in secret management with a UI in the agent configuration page:
 
-```js
-fetch("/api/companies/YOUR_COMPANY_ID/secrets", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    name: "linkedin-access-token",
-    value: "YOUR_TOKEN_HERE"
-  }),
-}).then(r => r.json()).then(j => console.log("Secret ID:", j.id));
-```
+1. Go to the **agent page** (e.g., CMO) → **Configuration** tab
+2. Scroll to the **Environment Variables** section
+3. Click **Add Variable**
+4. Enter the variable name (e.g., `LINKEDIN_ACCESS_TOKEN`)
+5. Switch the source from **"Plain"** to **"Secret"**
+6. Either select an existing secret from the dropdown, or click **Create New Secret**:
+   - Name: `linkedin-access-token`
+   - Value: paste your OAuth token
+   - The value is encrypted at rest — only the secret ID is stored in the config
+7. Click **Save** (floating button at the top)
 
-Values are encrypted at rest. Only the secret ID is visible in the API.
-
-### Configuring agents to use secrets
-
-Add the secret to the agent's adapter config as an environment variable. In the agent's Configuration → Advanced → env:
-
-```json
-{
-  "LINKEDIN_ACCESS_TOKEN": {
-    "type": "secret_ref",
-    "secretId": "THE_SECRET_ID",
-    "version": "latest"
-  }
-}
-```
-
-The agent reads `$LINKEDIN_ACCESS_TOKEN` from its environment during heartbeats.
+The agent reads `$LINKEDIN_ACCESS_TOKEN` from its environment during every heartbeat. When you rotate the token later, update the secret value — agents referencing `"version": "latest"` automatically get the new value on their next run.
 
 ### Token lifecycle
 
