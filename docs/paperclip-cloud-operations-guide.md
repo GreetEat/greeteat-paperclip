@@ -1,6 +1,6 @@
 ---
-title: "Paperclip on Google Cloud Run — Operations Guide"
-subtitle: "Deployment, board operations, and 3rd party integrations"
+title: "Paperclip Operations Guide"
+subtitle: "Board operations, integrations, and advanced workflows"
 author: "GreetEat Corp (OTC: GEAT)"
 date: "April 2026"
 ---
@@ -9,243 +9,294 @@ date: "April 2026"
 
 # About this guide
 
-This guide covers deploying and operating [Paperclip](https://github.com/paperclipai/paperclip) — the open-source AI agent orchestration platform — on Google Cloud Run with Vertex AI Claude.
+This guide covers operating [Paperclip](https://github.com/paperclipai/paperclip) — the open-source AI agent orchestration platform — from a board member's perspective.
 
-**Version**: written for Paperclip commit `ac664df` (between `v2026.403.0` and `v2026.410.0`). Paperclip is evolving rapidly — features, API endpoints, and UI may change between versions.
+**Version**: written for Paperclip commit `ac664df` (April 10, 2026, between `v2026.403.0` and `v2026.410.0`). Paperclip is evolving rapidly — features, API endpoints, and UI may change between versions.
 
-**Audience**: board members, platform operators, and anyone running Paperclip in a cloud environment.
+**Audience**: board members, operators, and anyone managing agents and work through the Paperclip dashboard.
 
 **Published by**: GreetEat Corp — [greeteat.com](https://greeteat.com) | OTC: GEAT
 
 \newpage
 
-# Part 1: Cloud Deployment Guide
+# Part 1: Board Operations
 
-Paperclip was designed for local developer use. Deploying it to stateless compute (Cloud Run) requires workarounds for the local-first assumptions. This section covers the 7 categories of workarounds we discovered and how we solved them.
+## Quick reference
 
-## The core mismatch
-
-| Paperclip assumes | Cloud Run provides |
+| I want to... | How |
 |---|---|
-| Persistent Docker volume at `/paperclip` | Per-instance ephemeral tmpfs |
-| Single user (the developer) | Multiple instances, no shared state |
-| `~/.paperclip/` persists between runs | Fresh filesystem on every scale event |
-| `paperclipai` CLI is on PATH | CLI is a pnpm script, not a binary |
-| Terminal access to the running process | No exec, no SSH, no TTY |
-| `disableSignUp=false` is fine | Open signup = published RCE exploit chain |
-
-## Workaround 1: GCS FUSE mount at `/paperclip`
-
-Without this, agents lose instructions, memory, and workspace files on every instance recycle. Cloud Run v2 supports GCS FUSE volumes natively:
-
-```hcl
-volumes {
-  name = "paperclip-state"
-  gcs { bucket = "your-state-bucket"; read_only = false }
-}
-containers {
-  volume_mounts { name = "paperclip-state"; mount_path = "/paperclip" }
-}
-```
-
-Runtime SA needs `roles/storage.objectUser` on the bucket.
-
-## Workaround 2: DATABASE_URL needs `?sslmode=require`
-
-postgres.js does NOT auto-negotiate TLS. Cloud SQL with `ssl_mode=ENCRYPTED_ONLY` rejects cleartext:
-
-```
-PostgresError: pg_hba.conf rejects connection for host "10.8.0.x",
-  user "paperclip", database "paperclip", no encryption
-```
-
-## Workaround 3: Bootstrap-ceo CLI wrapper
-
-The CLI bails if `/paperclip/instances/default/config.json` is missing. Fix: a wrapper script materializes a minimal config from env vars before running the CLI.
-
-`paperclipai` is NOT a binary — it's a pnpm script. The actual invocation is `node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts`. Don't override the Docker ENTRYPOINT.
-
-## Workaround 4: The bootstrap dance
-
-`PAPERCLIP_AUTH_DISABLE_SIGN_UP=true` blocks both the RCE exploit chain AND the first user creation. The bootstrap-ceo invite promotes a signed-in user — it doesn't create one.
-
-**Recipe**: temporarily flip the env var → sign up → accept invite → flip back. Same dance for every new user.
-
-## Workaround 5: No UI for human invites
-
-The dashboard only has invite-creation UI for agents. For human board users, call the API from browser dev tools:
-
-```js
-fetch("/api/companies/COMPANY_ID/invites", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ allowedJoinTypes: "human" }),
-}).then(r => r.json()).then(j => prompt("Invite URL:", location.origin + j.inviteUrl));
-```
-
-**Note**: company invites expire in 10 minutes. Create them when the invitee is ready to click.
-
-## Workaround 6: Managed instructions are disk-only
-
-Agent instructions written at creation time are lost when containers recycle. The GCS FUSE mount (Workaround 1) fixes this going forward. For agents created before the mount, restore from upstream templates at `server/src/onboarding-assets/`.
-
-## Workaround 7: Vertex web_search org policy
-
-If your GCP org enforces `denyAll` on `constraints/vertexai.allowedPartnerModelFeatures`, set a project-level override via `gcloud org-policies set-policy`. Requires `roles/orgpolicy.policyAdmin` at the org level.
-
-## Architecture
-
-```
-Internet → Cloud Run service (paperclip, min_instances=2)
-             ├─ VPC connector → Cloud SQL (PG17, private IP, HA)
-             ├─ GCS FUSE mount → persistent agent state (/paperclip)
-             ├─ Secrets from Secret Manager (5 mounted env vars)
-             └─ Vertex AI Claude (Opus 4.6 / Sonnet 4.6 / Haiku 4.5)
-
-Cloud Run Job (bootstrap-ceo) — seed operator bootstrap
-GitHub Actions (build-image.yml) — WIF auth, upstream Dockerfile
-```
-
-\newpage
-
-# Part 2: Board Operations Guide
-
-For board members who interact with Paperclip through the dashboard. No terminal or infrastructure knowledge required.
+| See what agents are doing | Dashboard → company → Live Runs |
+| Give an agent work | Create an issue and assign it |
+| Hire a new agent | Ask the CEO agent (via an issue) |
+| Invite a new board member | See "Inviting people" section below |
+| Review agent output | Agent page → Runs tab → click a run |
+| Set company strategy | Create goals, then create issues linked to them |
+| Check spending | Dashboard → company → Budget / Costs view |
 
 ## Understanding the hierarchy
 
 ```
-Board members (humans) — sign in, create goals, assign work, approve hires
-  └─ Goals (strategy) — what you want to achieve
-      └─ Projects (organization) — group related work
-          └─ Issues (work items) — specific tasks
-              └─ Agents (workers) — AI agents that do the work
+Board members (humans)
+  └─ sign in, create goals, assign work, approve hires
+      │
+Goals (strategy)
+  └─ what you want to achieve ("Build LinkedIn presence")
+      │
+Projects (organization)
+  └─ group related work ("Social Media Strategy")
+      │
+Issues (work items)
+  └─ specific tasks ("Draft 5 LinkedIn posts")
+      │
+Agents (workers)
+  └─ AI agents that do the work (CEO, CMO, Head of Research, etc.)
 ```
 
-**Key concept**: agents only work on issues that are assigned to them. They don't pick up work on their own.
+**Key concept**: agents only work on issues that are **assigned to them**. They don't pick up work on their own. You (or the CEO agent) must create an issue and assign it.
 
 ## Creating goals
 
-1. Dashboard → **Goals** → **New Goal**
-2. Title: clear, outcome-oriented (e.g., "Grow GreetEat user base to 10K MAU")
-3. Level: `company`, `team`, `agent`, or `task`
-4. Status: `planned` or `active`
+Goals are strategic objectives that organize your work. They don't directly trigger agent activity — they provide context and structure.
 
-Goals organize work — they don't trigger agent activity. Create issues linked to goals to make things happen.
+1. Dashboard → **Goals** (left sidebar)
+2. Click **New Goal**
+3. Fill in:
+   - **Title**: clear, outcome-oriented (e.g., "Grow GreetEat user base to 10K MAU")
+   - **Level**: `company` (top-level strategy), `team`, `agent`, or `task`
+   - **Status**: `planned` or `active`
+4. Click **Create**
+
+**Tip**: create a goal hierarchy. Example:
+
+- Company goal: "Establish market presence"
+  - Team goal: "Build social media following"
+    - Agent goal: "LinkedIn content calendar"
 
 ## Assigning work to agents
 
-1. Dashboard → **New Issue**
-2. Fill in title, description (be specific about deliverables), assignee, priority, goal
+This is the primary way you get things done.
+
+1. Dashboard → **Issues** or click **New Issue**
+2. Fill in:
+   - **Title**: specific and actionable
+   - **Description**: the brief — be specific about deliverables, constraints, audience
+   - **Assignee**: pick the right agent (see below)
+   - **Priority**: `critical`, `high`, `medium`, `low`
+   - **Goal**: link to the relevant goal (optional but recommended)
+   - **Project**: link to the relevant project (optional)
 3. Click **Create**
 
-### Writing good briefs
+### Which agent to assign to
 
-**Good**: "Research the top 5 competitors to GreetEat. Deliverables: competitive matrix, gap analysis, opportunity list. Focus on B2B-oriented competitors."
+| Work type | Assign to |
+|---|---|
+| Strategy, delegation, cross-functional coordination | **CEO** |
+| Marketing, content, social media, brand, growth | **CMO** |
+| Market research, competitive analysis, user insights | **Head of Product Research** |
+| Technical work, engineering tasks | **CTO** (if hired) |
 
-**Bad**: "Look into our competitors."
+### Writing good issue descriptions
+
+**Good** (specific, actionable):
+
+> Research the top 5 competitors to GreetEat's virtual meals platform.
+>
+> Deliverables:
+> - Competitive matrix (features, pricing, market position)
+> - Gap analysis: what do they offer that we don't?
+> - Opportunity list: where can GreetEat differentiate?
+>
+> Focus on B2B-oriented competitors.
+
+**Bad** (vague):
+
+> Look into our competitors.
 
 ### The CEO delegation pattern
 
-Assign to the **CEO** for cross-functional work. The CEO reads the issue, identifies which department owns it, creates a subtask for the right agent (CMO for marketing, Head of Research for analysis), and comments explaining the delegation.
+When you assign work to the **CEO**, it doesn't do the work itself. Instead:
+
+1. CEO reads the issue
+2. CEO identifies which department owns it (marketing → CMO, research → Head of Research, etc.)
+3. CEO creates a **subtask** assigned to the right agent
+4. CEO comments on your issue explaining who it delegated to and why
+5. The assigned agent wakes up and does the actual work
+
+This is by design — the CEO is a coordinator, not an individual contributor.
 
 ## Watching agents work
 
-- **Live Runs**: real-time view of active heartbeats
-- **Agent → Runs tab**: completed runs with transcripts, cost, outcome
-- **Issue comments**: agents post status updates as they work
+### Live view
+
+Dashboard → your company → **Live Runs** shows active agent heartbeats in real time.
+
+### Run history
+
+Agent page → **Runs** tab shows completed runs with:
+
+- **Transcript**: what the agent thought, what tools it used, what it decided
+- **Invocation details**: the command, working directory, environment
+- **Cost**: how much the run spent on LLM tokens
+
+### Issue comments
+
+Agents comment on their issues as they work. Check the **Comments** tab on any issue to see status updates, blockers, and deliverables.
 
 ## Hiring new agents
 
-Create an issue for the CEO: "Hire a [role] for [purpose]." The CEO uses the `paperclip-create-agent` skill. If board approval is required, you'll see a pending Approval to review.
+You don't create agents directly. Instead, you ask the CEO to hire:
+
+1. Create an issue assigned to **CEO**:
+   - Title: "Hire a [role] for [purpose]"
+   - Description: what the role should do, what skills it needs
+2. The CEO uses its hiring skill to submit a hire request
+3. If your company requires board approval for hires:
+   - You'll see a pending **Approval** in the dashboard
+   - Review and click **Approve** or **Request Changes**
+4. Once approved, the new agent appears in the agent list
 
 ### Agent instructions
 
-Every agent has instruction files (AGENTS.md, HEARTBEAT.md, SOUL.md, TOOLS.md). New hires get a generic default — customize via the Instructions tab on the agent page.
+Every agent has instruction files that define its persona and behavior:
 
-## Inviting new board members
+- **AGENTS.md** — main instructions: what the agent does, delegation rules
+- **HEARTBEAT.md** — the checklist it runs every time it wakes up
+- **SOUL.md** — persona, voice, strategic posture
+- **TOOLS.md** — notes about tools it has learned to use
 
-> **Current limitation**: the dashboard doesn't have a UI for human invites.
+To view/edit: Agent page → **Instructions** tab. Make changes → floating **Save** button appears → click Save.
 
-1. Ask your platform operator to temporarily enable sign-up
-2. Create an invite via browser dev tools:
+## Inviting a new board member
+
+> **Current limitation**: the dashboard doesn't have a UI button for
+> inviting human users. Use the method below.
+
+1. **Ask your platform operator** to temporarily enable sign-up (~1 minute)
+
+2. **Create an invite** — open browser developer tools (Cmd+Option+J on Mac), paste in the Console tab:
+
    ```js
-   fetch("/api/companies/COMPANY_ID/invites", {
+   fetch("/api/companies/YOUR_COMPANY_ID/invites", {
      method: "POST",
      headers: { "Content-Type": "application/json" },
      body: JSON.stringify({ allowedJoinTypes: "human" }),
-   }).then(r => r.json()).then(j => prompt("Copy:", location.origin + j.inviteUrl));
+   })
+     .then(r => r.json())
+     .then(j => prompt("Copy this invite URL:", location.origin + j.inviteUrl));
    ```
-3. Send the URL to the invitee (expires in 10 minutes)
-4. They sign up + accept
-5. You approve the join request
-6. Operator re-locks sign-up
+
+3. **Send the URL** to the invitee. **It expires in 10 minutes.**
+
+4. Invitee opens the URL → signs up → clicks Accept
+
+5. **You approve** the join request (in the dashboard or via dev tools)
+
+6. **Ask your operator to re-lock sign-up** when done
+
+## Approving agent requests
+
+When an approval is pending:
+
+1. You'll see a notification in the dashboard
+2. Click into the **Approvals** section
+3. Review: what's being asked, why, estimated cost/impact
+4. Click **Approve** or **Request Changes** (with a comment explaining what to fix)
 
 \newpage
 
-# Part 3: 3rd Party Integrations & Automation
+# Part 2: 3rd Party Integrations
 
 ## Connecting agents to external services
 
-### Step 1 — Obtain API credentials (human, one-time)
+Agents can interact with LinkedIn, X/Twitter, Slack, analytics platforms, and any service with an API. The pattern is always:
 
-| Service | Where | What you need |
+1. **You (human) obtain API credentials** — one-time browser OAuth flow
+2. **Store them as Paperclip secrets** — encrypted at rest, agents access them at runtime
+3. **Agent calls the external API** — using curl with the decrypted credentials
+
+### Obtaining credentials
+
+| Service | Where to get them | What you need |
 |---|---|---|
-| **LinkedIn** | linkedin.com/developers | OAuth 2.0 token + org URN |
-| **X (Twitter)** | developer.x.com | API Key, Secret, Access Token |
-| **Slack** | api.slack.com/apps | Bot token (`xoxb-...`) |
+| **LinkedIn** | [linkedin.com/developers](https://www.linkedin.com/developers/) → Create App | OAuth 2.0 access token + organization URN |
+| **X (Twitter)** | [developer.x.com](https://developer.x.com/) → Developer Portal | API Key, API Secret, Access Token |
+| **Slack** | [api.slack.com/apps](https://api.slack.com/apps) → Create App | Bot token (`xoxb-...`) |
+| **Google Analytics** | Google Cloud Console → APIs & Services | Service account key or OAuth token |
 
-### Step 2 — Store as Paperclip secrets
+### Storing credentials as secrets
+
+In the browser dev tools console (while signed in):
 
 ```js
-fetch("/api/companies/COMPANY_ID/secrets", {
+fetch("/api/companies/YOUR_COMPANY_ID/secrets", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     name: "linkedin-access-token",
-    value: "YOUR_TOKEN"
+    value: "YOUR_TOKEN_HERE"
   }),
 }).then(r => r.json()).then(j => console.log("Secret ID:", j.id));
 ```
 
-Values are encrypted at rest. Only secret IDs are visible in the API.
+Values are encrypted at rest. Only the secret ID is visible in the API.
 
-### Step 3 — Configure agent to use the secret
+### Configuring agents to use secrets
 
-Add to the agent's adapter config env:
+Add the secret to the agent's adapter config as an environment variable. In the agent's Configuration → Advanced → env:
 
 ```json
 {
   "LINKEDIN_ACCESS_TOKEN": {
     "type": "secret_ref",
-    "secretId": "SECRET_ID",
+    "secretId": "THE_SECRET_ID",
     "version": "latest"
   }
 }
 ```
 
-### Step 4 — Agent posts via API
+The agent reads `$LINKEDIN_ACCESS_TOKEN` from its environment during heartbeats.
 
-The agent uses `curl` to call external APIs with the decrypted token at runtime.
+### Token lifecycle
+
+API tokens expire. Plan for it:
+
+- **LinkedIn**: tokens expire after 60 days
+- **X**: tokens don't expire but can be revoked
+- **Slack**: bot tokens don't expire unless the app is uninstalled
+
+Set up a monthly **routine** (see next section) that tests each credential and alerts the board if any are about to expire.
 
 ## Scheduling recurring tasks (routines)
 
-Create a routine with a cron trigger:
+Routines let you run tasks on a schedule without manually creating issues each time.
+
+### How routines work
+
+1. You define a routine: title, description, assigned agent, schedule
+2. When the schedule fires, Paperclip creates an **issue** automatically
+3. The assigned agent wakes up and works on the issue in its normal flow
+4. Agent marks the issue done when finished
+
+### Setting up a routine
+
+**Option A — Ask the CEO**: create an issue "Set up a Mon/Wed/Fri LinkedIn posting routine for the CMO"
+
+**Option B — Create it yourself** via browser dev tools:
 
 ```js
-// Create routine + schedule trigger
-fetch("/api/companies/COMPANY_ID/routines", {
+fetch("/api/companies/YOUR_COMPANY_ID/routines", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     title: "LinkedIn weekly posts",
-    description: "Check content calendar, post next scheduled item",
+    description: "Check content calendar, pick next post, publish via API",
     assigneeAgentId: "CMO_AGENT_ID",
-    projectId: "PROJECT_ID",
+    projectId: "YOUR_PROJECT_ID",
     status: "active"
   }),
 }).then(r => r.json()).then(j => {
-  fetch(`/api/routines/${j.id}/triggers`, {
+  // Add a schedule trigger
+  fetch("/api/routines/" + j.id + "/triggers", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -254,527 +305,208 @@ fetch("/api/companies/COMPANY_ID/routines", {
       timezone: "America/New_York"
     }),
   });
+  console.log("Routine created:", j.id);
 });
 ```
 
-| Schedule | Cron |
+### Useful schedules
+
+| Schedule | Cron expression |
 |---|---|
-| Mon/Wed/Fri 9am | `0 9 * * 1,3,5` |
-| Every weekday 9am | `0 9 * * 1-5` |
-| Weekly Monday 10am | `0 10 * * 1` |
-| 1st of month | `0 9 1 * *` |
+| Mon/Wed/Fri at 9am | `0 9 * * 1,3,5` |
+| Every weekday at 9am | `0 9 * * 1-5` |
+| Every Monday at 10am | `0 10 * * 1` |
+| Twice daily (9am + 3pm) | `0 9,15 * * 1-5` |
+| First of every month | `0 9 1 * *` |
 
-When a routine fires, it creates an issue → the agent wakes → does the work → marks done.
+### Managing routines
 
-## End-to-end: automated LinkedIn posting
-
-1. **Get credentials** (human, one-time): LinkedIn Developer App → access token
-2. **Store token** as a Paperclip company secret
-3. **Create goal + project**: "Build LinkedIn presence" → "Social Media"
-4. **CMO drafts content calendar** (via an issue)
-5. **Set up posting routine**: Mon/Wed/Fri 9am → CMO
-6. **Steady state**: routine fires → CMO reads calendar → posts via LinkedIn API → done
-7. **Token refresh**: set a monthly health-check routine; LinkedIn tokens expire after 60 days
-
-## Token lifecycle management
-
-Set up a monthly routine to verify API tokens still work:
-
-- Title: "Check API token health"
-- Schedule: 1st of month, 9am
-- Agent: CMO
-- Description: "Test each credential with a lightweight API call. If any returns 401/403, mark blocked and tag the board to refresh."
+- **Pause**: stops firing, can resume later
+- **Resume**: reactivates a paused routine
+- **Archive**: permanent — cannot be reactivated
+- **Manual run**: fire immediately regardless of schedule
 
 \newpage
 
-# Part 4: Advanced Workflows
+# Part 3: Example Workflows
 
-## Video content creation with Remotion
+## Social media campaign
 
-[Remotion](https://www.remotion.dev/) lets you create videos programmatically using React. Agents can write video compositions as code, render them via Remotion Lambda (serverless), and post the finished videos to social media — all without human intervention.
+### One-time setup (~30 minutes)
 
-### Architecture
+1. **Get LinkedIn/X credentials** from their developer portals
+2. **Store as Paperclip secrets** (see Part 2)
+3. **Create a goal**: "Build social media presence" (company level)
+4. **Create a project**: "Social Media" linked to the goal
 
-```
-CMO agent wakes on routine
-  │
-  ├─ 1. Reads content calendar
-  ├─ 2. Writes a Remotion composition (.tsx) to /paperclip workspace
-  ├─ 3. Calls Remotion Lambda API to render → gets MP4 URL
-  ├─ 4. Downloads MP4, attaches to the issue for board review
-  └─ 5. Posts to LinkedIn/X with the video
-```
+### Content creation
 
-### Prerequisites (one-time setup)
+5. **Create an issue for CEO**: "Develop LinkedIn + X content strategy"
+6. CEO delegates to CMO → CMO researches, drafts content calendar and posts
+7. **You review** the drafts in the issue comments
+8. Iterate via comments until satisfied
 
-**Remotion Lambda** — deploy a Remotion Lambda function to AWS (or use Remotion's hosted service). This handles the actual video rendering — the Paperclip agent only needs to make API calls, no local Chromium/ffmpeg required.
+### Automated posting
 
-**Store Remotion credentials** as Paperclip company secrets:
+9. **Set up posting routines**: Mon/Wed/Fri 9am for LinkedIn, daily for X
+10. Each routine fire → creates an issue → CMO reads calendar → posts → marks done
+11. **You monitor** the issue feed for posting confirmations
 
-```js
-// Remotion Lambda credentials
-fetch("/api/companies/COMPANY_ID/secrets", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    name: "remotion-aws-access-key",
-    value: "AKIA..."
-  }),
-}).then(r => r.json()).then(console.log);
+## Competitive research
 
-// Repeat for remotion-aws-secret-key, remotion-function-name, etc.
-```
+1. Create an issue for **Head of Product Research**:
 
-**Enable video attachments** — add to Cloud Run service env vars (via Terraform):
+> Competitive analysis: virtual business meals market
+>
+> Deliverables:
+> 1. Market map: who are the players?
+> 2. Feature comparison matrix
+> 3. Pricing intelligence
+> 4. SWOT analysis vs top 3 competitors
+> 5. Recommendation: where should we invest to differentiate?
 
-```
-PAPERCLIP_ALLOWED_ATTACHMENT_TYPES=image/*,application/pdf,text/*,video/mp4,video/webm
-```
+2. Agent researches via web search, compiles structured report as issue comments
+3. Review findings, request deeper dives via follow-up comments
 
-### How an agent renders a video
+## Data-driven video content with Remotion
 
-The CMO agent writes a Remotion composition, then calls the Lambda API:
+Agents can create programmatic video content using [Remotion](https://www.remotion.dev/) — a React-based video framework.
 
-**Step 1 — Write the composition**
-
-The agent creates a React component that defines the video. This is just code — the agent writes it like any other file:
-
-```tsx
-// /paperclip/workspaces/<agent>/renders/linkedin-post.tsx
-import { AbsoluteFill, useCurrentFrame, interpolate } from "remotion";
-
-export const LinkedInPost: React.FC = () => {
-  const frame = useCurrentFrame();
-  const opacity = interpolate(frame, [0, 30], [0, 1]);
-
-  return (
-    <AbsoluteFill style={{ backgroundColor: "#0077B5" }}>
-      <h1 style={{ color: "white", opacity, fontSize: 64, padding: 80 }}>
-        GreetEat: Business meals, reimagined
-      </h1>
-    </AbsoluteFill>
-  );
-};
-```
-
-**Step 2 — Render via Remotion Lambda**
-
-```bash
-curl -X POST "https://remotion-lambda.your-domain.com/render" \
-  -H "Authorization: Bearer $REMOTION_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "composition": "LinkedInPost",
-    "serveUrl": "https://your-remotion-bundle.s3.amazonaws.com/bundle.js",
-    "inputProps": { "title": "GreetEat: Business meals, reimagined" },
-    "codec": "h264",
-    "outputFormat": "mp4"
-  }'
-```
-
-Returns a render ID. Poll for completion, then download the MP4.
-
-**Step 3 — Attach to issue for review**
-
-```bash
-curl -X POST "$PAPERCLIP_API_URL/api/companies/$COMPANY_ID/issues/$ISSUE_ID/attachments" \
-  -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
-  -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
-  -F "file=@/tmp/linkedin-post.mp4"
-```
-
-Board members see the video directly in the issue's attachment viewer.
-
-### Template-driven video at scale
-
-For repeatable content (weekly stats videos, product announcements), store Remotion templates in the agent's workspace:
+### How it works
 
 ```
-/paperclip/workspaces/<cmo>/templates/
-  ├── weekly-stats.tsx       # Animated chart template
-  ├── product-spotlight.tsx  # Feature highlight template
-  ├── company-news.tsx       # Press release template
-  └── data-insight.tsx       # WallStreetStats data viz
+Routine fires → CMO agent wakes
+  → reads content calendar
+  → writes a video composition (React code)
+  → renders to MP4 via Remotion Lambda (serverless)
+  → attaches video to issue for board review
+  → posts to LinkedIn/X with the video
 ```
 
-The routine fires → agent picks the right template → fills in current data → renders → posts. Each video is unique but follows a consistent brand format.
+### One-time setup
 
-### Cost considerations
+1. **Deploy Remotion Lambda** to AWS (or use Remotion Cloud)
+2. **Store Remotion API credentials** as Paperclip secrets
+3. **Create video templates** — reusable React compositions for different content types:
+   - Weekly stats animation (data-driven charts)
+   - Product spotlight (feature highlight + screenshots)
+   - Company news (press release style)
+   - Data insight (WallStreetStats visualizations)
+
+### Steady-state flow
+
+- Routine fires Mon/Wed/Fri
+- CMO picks a template + fills in current data
+- Remotion Lambda renders a 15-30 second MP4 (~$0.01-0.05 per render)
+- CMO attaches the video to the issue for optional board review
+- CMO posts to LinkedIn/X with the video + caption
+
+### Cost
 
 | Component | Cost |
 |---|---|
-| Remotion Lambda render (15s video) | ~$0.01-0.05 per render |
-| Claude Opus 4.6 (composition writing) | ~$0.10-0.50 per heartbeat |
-| GCS storage (MP4 files) | ~$0.02/GB/month |
-| LinkedIn/X API | Free (within rate limits) |
+| Video rendering (15s, per video) | ~$0.01-0.05 |
+| LLM (agent writing + decision-making) | ~$0.10-0.50 per heartbeat |
+| Storage (MP4 files) | ~$0.02/GB/month |
+| Social media APIs | Free (within rate limits) |
 
-A Mon/Wed/Fri posting routine with video: ~$5-15/month total.
+A 3x/week video posting routine: **~$5-15/month total**.
 
 ## Multi-agent content pipeline
 
-For production content workflows, chain multiple agents:
+For production workflows, chain agents in a pipeline:
 
-```
-1. Head of Product Research → competitive data + market insights
-       ↓ (subtask with data attached)
-2. CMO → content strategy + copy + Remotion composition
-       ↓ (subtask with draft attached)
-3. Board review → approve or request changes
-       ↓ (comment on issue)
-4. CMO → post to LinkedIn/X (routine-triggered)
-```
+1. **Head of Product Research** → generates market data + insights
+2. **CMO** → turns insights into content strategy + drafts
+3. **Board** → reviews and approves
+4. **CMO** → publishes (routine-triggered)
 
-Set this up by having the CEO create a parent issue ("Q2 content campaign") with subtasks that cascade through the pipeline. Each agent works its piece, attaches deliverables, and assigns the next step.
-
-### Example: data-driven weekly video series
-
-**"WallStreetStats Weekly Insights"** — every Monday, publish a 15-second animated chart video on X showing the week's top sentiment shifts.
-
-Setup:
-1. **Goal**: "Build WallStreetStats brand on X"
-2. **Routine**: "Weekly Insights Video" — fires Monday 7am, assigned to CMO
-3. **Pipeline per issue**:
-   - CMO reads this week's WallStreetStats data (via curl to your analytics API or stored in PARA memory)
-   - CMO picks the most interesting data point
-   - CMO writes a Remotion composition with the chart animation
-   - CMO renders via Lambda → gets MP4
-   - CMO posts to X with the video + a caption
-   - CMO marks issue done with a link to the tweet
+Set this up with a parent issue ("Q2 content campaign") and subtasks that cascade through the chain.
 
 ## Webhook-triggered workflows
 
-Routines can also fire via **webhooks** — external systems POST to a Paperclip URL and trigger agent work:
+External systems can trigger agent work by POSTing to a webhook URL:
 
-```js
-// Create a webhook trigger on a routine
-fetch(`/api/routines/${routineId}/triggers`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ kind: "webhook" }),
-}).then(r => r.json()).then(t => {
-  console.log("Webhook URL:", `/api/routine-triggers/public/${t.publicId}/fire`);
-});
-```
+- **GitHub push** → agent reviews the code change
+- **Stripe payment** → agent sends a thank-you or updates records
+- **CRM lead created** → agent researches the company
+- **Monitoring alert** → agent investigates the issue
 
-**Use cases**:
-- **GitHub push → agent reviews the PR** (GitHub webhook fires the routine)
-- **Stripe payment → agent sends a thank-you** (Stripe webhook)
-- **CRM lead created → agent researches the company** (HubSpot/Salesforce webhook)
-- **Monitoring alert → agent investigates** (PagerDuty/Datadog webhook)
-
-The webhook creates an issue with the payload data → the assigned agent wakes and handles it.
-
-## Building custom Paperclip skills
-
-Skills are reusable capabilities you can install on agents. Paperclip has a skill authoring system:
-
-```
-skills/
-  my-skill/
-    SKILL.md          # Skill definition (markdown with instructions)
-    references/       # Supporting docs the skill can reference
-    evals/            # Test cases for the skill
-```
-
-You can create company-specific skills (e.g., "post-to-linkedin", "render-remotion-video", "analyze-wallstreetstats-data") and install them on agents via:
-
-```
-POST /api/agents/{agentId}/skills/sync
-{ "desiredSkills": ["post-to-linkedin", "render-remotion-video"] }
-```
-
-This is the most powerful extensibility pattern — it lets you package repeatable workflows as skills that any agent can use, rather than embedding everything in the agent's AGENTS.md instructions.
+Create a webhook trigger on a routine, give the URL to the external system, and the assigned agent handles each incoming event.
 
 \newpage
 
-# Part 5: Installing Skills for LinkedIn, X, and Remotion
+# Part 4: Installing Skills on Agents
 
-Skills are reusable packages of instructions + reference docs that teach agents specific capabilities. Instead of writing long AGENTS.md instructions for each integration, create a skill once and install it on any agent that needs it.
+Skills are reusable packages that teach agents specific capabilities. Instead of writing long instructions for each integration, create a skill once and install it on any agent.
 
-## Skill file structure
+## What's a skill?
+
+A skill is a folder with:
 
 ```
 skills/
   post-to-linkedin/
-    SKILL.md                    # Main skill instructions
-    references/
-      linkedin-api-reference.md # API docs the agent can read
-      post-formats.md           # Template gallery
-
-  post-to-x/
-    SKILL.md
-    references/
-      x-api-reference.md
-      thread-formats.md
-
-  render-remotion-video/
-    SKILL.md
-    references/
-      remotion-lambda-api.md
-      composition-templates.md
+    SKILL.md               # Instructions the agent follows
+    references/            # Supporting docs (API reference, templates)
 ```
 
-## LinkedIn posting skill
+When installed on an agent, the SKILL.md becomes available as context during heartbeats. The agent can invoke the skill by name.
 
-Create this in your repo or the agent's workspace:
+## Available skill ideas
 
-### `skills/post-to-linkedin/SKILL.md`
-
-```markdown
-# Post to LinkedIn Skill
-
-Post content to a LinkedIn organization page via the LinkedIn API.
-
-## Prerequisites
-
-- Company secret `linkedin-access-token` must exist (OAuth 2.0 token)
-- Company secret `linkedin-org-urn` must exist (e.g., `urn:li:organization:12345`)
-
-## How to post
-
-Read the access token and org URN from environment (injected via secret_ref):
-
-    curl -X POST "https://api.linkedin.com/v2/ugcPosts" \
-      -H "Authorization: Bearer $LINKEDIN_ACCESS_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "author": "'"$LINKEDIN_ORG_URN"'",
-        "lifecycleState": "PUBLISHED",
-        "specificContent": {
-          "com.linkedin.ugc.ShareContent": {
-            "shareCommentary": { "text": "YOUR POST TEXT" },
-            "shareMediaCategory": "NONE"
-          }
-        },
-        "visibility": {
-          "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
-        }
-      }'
-
-## With an image or video
-
-Upload media first, then reference it:
-
-    # 1. Register upload
-    curl -X POST "https://api.linkedin.com/v2/assets?action=registerUpload" \
-      -H "Authorization: Bearer $LINKEDIN_ACCESS_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "registerUploadRequest": {
-          "owner": "'"$LINKEDIN_ORG_URN"'",
-          "recipes": ["urn:li:digitalmediaRecipe:feedshare-video"],
-          "serviceRelationships": [{
-            "identifier": "urn:li:userGeneratedContent",
-            "relationshipType": "OWNER"
-          }]
-        }
-      }'
-
-    # 2. Upload the file to the URL returned in step 1
-    # 3. Create the post with shareMediaCategory: "VIDEO" and the asset URN
-
-For complete API reference, read: `references/linkedin-api-reference.md`
-
-## Rules
-
-- Never post more than 2x per day on LinkedIn (platform best practice)
-- Always check if the token is valid before posting (GET /v2/me)
-- If you get 401, mark the issue as blocked and tag the board to refresh the token
-- All OTC/GEAT-related posts must be factual — no forward-looking statements
-```
-
-## X (Twitter) posting skill
-
-### `skills/post-to-x/SKILL.md`
-
-```markdown
-# Post to X Skill
-
-Post content to X (Twitter) via the X API v2.
-
-## Prerequisites
-
-- Company secret `x-api-key` (API Key)
-- Company secret `x-api-secret` (API Secret)
-- Company secret `x-access-token` (Access Token)
-- Company secret `x-access-token-secret` (Access Token Secret)
-
-## How to post a tweet
-
-X API v2 uses OAuth 1.0a. Generate the authorization header or use
-a helper. Simplest approach — use the v2 endpoint with Bearer token:
-
-    curl -X POST "https://api.x.com/2/tweets" \
-      -H "Authorization: Bearer $X_BEARER_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{ "text": "YOUR TWEET TEXT" }'
-
-## Posting a thread
-
-Post the first tweet, capture its ID, then reply to it:
-
-    # First tweet
-    TWEET_ID=$(curl -sS -X POST "https://api.x.com/2/tweets" \
-      -H "Authorization: Bearer $X_BEARER_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{ "text": "1/ Thread starts here..." }' | jq -r '.data.id')
-
-    # Reply
-    curl -X POST "https://api.x.com/2/tweets" \
-      -H "Authorization: Bearer $X_BEARER_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{ "text": "2/ Continuation...", "reply": { "in_reply_to_tweet_id": "'"$TWEET_ID"'" }}'
-
-## With media
-
-    # 1. Upload media via v1.1 media endpoint
-    MEDIA_ID=$(curl -X POST "https://upload.twitter.com/1.1/media/upload.json" \
-      -H "Authorization: OAuth ..." \
-      -F "media=@/tmp/video.mp4" | jq -r '.media_id_string')
-
-    # 2. Post with media
-    curl -X POST "https://api.x.com/2/tweets" \
-      -H "Authorization: Bearer $X_BEARER_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{ "text": "Check out this video!", "media": { "media_ids": ["'"$MEDIA_ID"'"] }}'
-
-## Rules
-
-- Respect rate limits: 300 tweets/3 hours for app-level auth
-- Use $GEAT cashtag in investor-relevant posts
-- Threads for depth, single tweets for engagement
-- If posting video, wait for media processing to complete before posting
-```
-
-## Remotion video rendering skill
-
-### `skills/render-remotion-video/SKILL.md`
-
-```markdown
-# Render Remotion Video Skill
-
-Create and render programmatic videos using Remotion Lambda.
-
-## Prerequisites
-
-- Company secret `remotion-api-key` (Remotion Cloud API key or AWS credentials)
-- A deployed Remotion bundle URL (the compiled React app)
-- Templates stored in your workspace at `./templates/remotion/`
-
-## Available templates
-
-Check `./templates/remotion/` for existing compositions:
-
-- `weekly-stats.tsx` — animated chart with data overlay
-- `product-spotlight.tsx` — feature highlight with text + screenshot
-- `company-news.tsx` — press release style with logo + headline
-- `data-insight.tsx` — WallStreetStats data visualization
-
-## How to render
-
-1. Pick or create a composition
-2. Call the Remotion Lambda API:
-
-    curl -X POST "https://remotion-lambda-endpoint/render" \
-      -H "Authorization: Bearer $REMOTION_API_KEY" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "composition": "WeeklyStats",
-        "serveUrl": "https://your-bundle-url/bundle.js",
-        "inputProps": {
-          "title": "Top Sentiment Shifts This Week",
-          "data": [
-            {"ticker": "$AAPL", "shift": "+12%"},
-            {"ticker": "$GEAT", "shift": "+8%"}
-          ]
-        },
-        "codec": "h264",
-        "imageFormat": "jpeg",
-        "outputFormat": "mp4",
-        "durationInFrames": 450,
-        "fps": 30
-      }'
-
-3. Poll for completion:
-
-    curl "https://remotion-lambda-endpoint/render/$RENDER_ID/status" \
-      -H "Authorization: Bearer $REMOTION_API_KEY"
-
-4. When done, download the MP4:
-
-    curl -o /tmp/output.mp4 "$RENDER_OUTPUT_URL"
-
-5. Attach to the issue:
-
-    curl -X POST "$PAPERCLIP_API_URL/api/companies/$COMPANY_ID/issues/$ISSUE_ID/attachments" \
-      -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
-      -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
-      -F "file=@/tmp/output.mp4"
-
-## Creating new compositions
-
-Write standard Remotion React components. Key constraints:
-- Keep compositions pure — all data via inputProps, no external fetches during render
-- Target 1080x1080 (square) for LinkedIn, 1920x1080 for X
-- 15-30 seconds is the sweet spot for social media video
-- Use the Remotion spring() function for smooth animations
-```
+| Skill | What it teaches the agent |
+|---|---|
+| `post-to-linkedin` | LinkedIn API posting: text posts, image/video uploads, organization pages |
+| `post-to-x` | X API v2: tweets, threads, media attachments, cashtag usage |
+| `render-remotion-video` | Remotion Lambda: write compositions, render MP4s, manage templates |
+| `analyze-market-data` | Web research patterns, competitive matrix templates, SWOT frameworks |
+| `manage-content-calendar` | Calendar file format, scheduling logic, cross-platform coordination |
 
 ## Installing skills on agents
 
-Once skills are created, install them on agents via the Paperclip API:
+### When hiring (recommended)
 
-### Option A — Import from your repo
+Include `desiredSkills` in the hire request. The CEO agent can do this automatically when it uses the `paperclip-create-agent` skill:
 
-If skills live in the repo as files, use the company skills import:
+```json
+{
+  "name": "CMO",
+  "desiredSkills": ["post-to-linkedin", "post-to-x", "render-remotion-video"]
+}
+```
+
+### On existing agents
+
+Sync skills via the API:
+
+```js
+fetch("/api/agents/AGENT_ID/skills/sync", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    desiredSkills: ["post-to-linkedin", "post-to-x"]
+  }),
+}).then(r => r.json()).then(console.log);
+```
+
+### Creating custom skills
+
+Write a `SKILL.md` with:
+1. **Prerequisites**: what secrets/config must exist
+2. **How to**: step-by-step API calls with curl examples
+3. **Rules**: rate limits, compliance guardrails, error handling
+4. **References**: link to supporting docs in the `references/` folder
+
+Install company-wide via:
 
 ```js
 fetch("/api/companies/COMPANY_ID/skills/import", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    source: "local",
-    path: "/paperclip/instances/prod/skills/COMPANY_ID/__runtime__/"
-  }),
+  body: JSON.stringify({ source: "local", path: "/path/to/skills/" }),
 }).then(r => r.json()).then(console.log);
 ```
-
-### Option B — Scan project workspaces
-
-If skills are in a project workspace, scan for them:
-
-```js
-fetch("/api/companies/COMPANY_ID/skills/scan-projects", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-}).then(r => r.json()).then(console.log);
-```
-
-### Option C — CEO installs during hiring
-
-When the CEO hires an agent, include `desiredSkills` in the hire request:
-
-```json
-{
-  "name": "CMO",
-  "desiredSkills": ["post-to-linkedin", "post-to-x", "render-remotion-video"],
-  ...
-}
-```
-
-### Sync skills on existing agents
-
-```js
-fetch("/api/agents/CMO_AGENT_ID/skills/sync", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    desiredSkills: ["post-to-linkedin", "post-to-x", "render-remotion-video"]
-  }),
-}).then(r => r.json()).then(console.log);
-```
-
-After syncing, the agent can invoke the skill via `Skill` tool calls in its heartbeats — the skill's SKILL.md becomes available as context.
 
 \newpage
 
@@ -790,6 +522,7 @@ After syncing, the agent can invoke the skill via `Skill` tool calls in its hear
 | **Project** | Container for related issues |
 | **Routine** | Recurring task with a schedule trigger |
 | **Secret** | Encrypted credential stored in Paperclip |
+| **Skill** | Reusable capability package installed on agents |
 | **Approval** | Request needing board sign-off |
 | **Run** | One heartbeat execution with transcript and cost |
 | **PARA memory** | Agent's personal knowledge system |
@@ -798,4 +531,4 @@ After syncing, the agent can invoke the skill via `Skill` tool calls in its hear
 
 *GreetEat Corp (OTC: GEAT) — [greeteat.com](https://greeteat.com)*
 
-*Written for Paperclip commit `ac664df` (between v2026.403.0 and v2026.410.0). Paperclip is evolving rapidly — verify against your deployed version.*
+*Written for Paperclip commit `ac664df` (April 10, 2026, between v2026.403.0 and v2026.410.0). Paperclip is evolving rapidly — verify against your deployed version.*
